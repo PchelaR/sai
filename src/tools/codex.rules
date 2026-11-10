@@ -1,0 +1,7 @@
+prefix_rule(pattern = ["rm"], decision = "forbidden", justification = "Deleting files is not allowed")
+prefix_rule(pattern = ["rmdir"], decision = "forbidden", justification = "Deleting files is not allowed")
+prefix_rule(pattern = ["unlink"], decision = "forbidden", justification = "Deleting files is not allowed")
+prefix_rule(pattern = ["shred"], decision = "forbidden", justification = "Deleting files is not allowed")
+prefix_rule(pattern = ["git", "clean"], decision = "forbidden", justification = "Deleting files is not allowed")
+prefix_rule(pattern = ["git", "commit"], decision = "forbidden", justification = "Commits are made by the user")
+prefix_rule(pattern = ["git", "push"], decision = "forbidden", justification = "Pushes are made by the user")

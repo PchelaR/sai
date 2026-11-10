@@ -1,54 +1,71 @@
-use anyhow::{Result, bail};
-use base64::{Engine, prelude::BASE64_STANDARD};
+use std::fmt;
+
 use clap::ValueEnum;
 
-use crate::fingerprint;
-
-pub const SESSION: &str = "agent";
-pub const COMMAND: &str = "agent";
-
-#[derive(Clone, Copy, Default, ValueEnum)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum Agent {
     #[default]
     Claude,
     Codex,
 }
 
-pub struct Image {
-    repository: &'static str,
-    dockerfile: &'static str,
-    pub policy: Policy,
-}
-
-pub struct Policy {
-    pub name: &'static str,
-    pub content: &'static str,
-    pub container_path: &'static str,
-}
-
 impl Agent {
-    pub fn image(self) -> Result<Image> {
+    pub fn parse(name: &str) -> Option<Agent> {
+        Agent::value_variants()
+            .iter()
+            .copied()
+            .find(|agent| agent.name() == name)
+    }
+
+    pub fn name(self) -> &'static str {
         match self {
-            Agent::Claude => Ok(Image {
-                repository: "sai-agent-claude",
-                dockerfile: include_str!("agent/claude.Dockerfile"),
-                policy: Policy {
-                    name: "claude-managed-settings.json",
-                    content: include_str!("agent/claude-managed-settings.json"),
-                    container_path: "/etc/claude-code/managed-settings.json",
-                },
-            }),
-            Agent::Codex => bail!("codex agent is not supported yet"),
+            Agent::Claude => "claude",
+            Agent::Codex => "codex",
+        }
+    }
+
+    pub fn command(self) -> &'static str {
+        match self {
+            Agent::Claude => "claude --permission-mode acceptEdits",
+            Agent::Codex => "codex --sandbox danger-full-access --ask-for-approval on-request",
+        }
+    }
+
+    pub fn dockerfile(self) -> &'static str {
+        match self {
+            Agent::Claude => include_str!("agent/claude.Dockerfile"),
+            Agent::Codex => include_str!("agent/codex.Dockerfile"),
         }
     }
 }
 
-impl Image {
-    pub fn reference(&self) -> String {
-        format!("{}:{}", self.repository, fingerprint::of(self.dockerfile))
+impl fmt::Display for Agent {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str(self.name())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::ValueEnum;
+
+    use super::Agent;
+
+    #[test]
+    fn parses_its_own_names() {
+        for agent in Agent::value_variants() {
+            assert_eq!(Agent::parse(agent.name()), Some(*agent));
+        }
     }
 
-    pub fn encoded_dockerfile(&self) -> String {
-        BASE64_STANDARD.encode(self.dockerfile)
+    #[test]
+    fn rejects_unknown_names() {
+        assert!(Agent::parse("").is_none());
+        assert!(Agent::parse("gpt").is_none());
+    }
+
+    #[test]
+    fn defaults_to_claude() {
+        assert_eq!(Agent::default(), Agent::Claude);
     }
 }

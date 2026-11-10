@@ -9,16 +9,16 @@ pub fn run() -> Result<()> {
     let output = remote::output(LIST, &[])?;
     let projects: Vec<Vec<&str>> = output
         .lines()
-        .map(|line| line.splitn(3, '\t').collect())
+        .map(|line| line.splitn(4, '\t').collect())
         .collect();
     if projects.is_empty() {
         println!("No projects. Attach one with: sai attach <dir>");
         return Ok(());
     }
 
-    print_row("NAME", "AGENT", "SYNC", "PATH");
+    print_row("NAME", "AGENT", "STATE", "SYNC", "PATH");
     for project in projects {
-        let &[id, state, path] = project.as_slice() else {
+        let &[id, agent, state, path] = project.as_slice() else {
             continue;
         };
         let sync = match mutagen::session(id)? {
@@ -26,11 +26,11 @@ pub fn run() -> Result<()> {
             None => NOT_SYNCING.to_owned(),
         };
         let name = id.strip_prefix("sai-").unwrap_or(id);
-        print_row(name, state, &sync, path);
+        print_row(name, agent, state, &sync, path);
     }
     Ok(())
 }
 
-fn print_row(name: &str, state: &str, sync: &str, path: &str) {
-    println!("{name:<20} {state:<10} {sync:<28} {path}");
+fn print_row(name: &str, agent: &str, state: &str, sync: &str, path: &str) {
+    println!("{name:<20} {agent:<8} {state:<10} {sync:<28} {path}");
 }

@@ -40,3 +40,23 @@ pub fn names() -> Vec<&'static str> {
         .map(|pattern| pattern.trim_end_matches('/'))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{PATTERNS, names};
+
+    #[test]
+    fn names_drop_trailing_slashes() {
+        let names = names();
+        assert_eq!(names.len(), PATTERNS.len());
+        assert!(names.contains(&".ssh"));
+        assert!(names.iter().all(|name| !name.ends_with('/')));
+    }
+
+    #[test]
+    fn covers_common_secrets() {
+        for pattern in [".env", ".env.*", "*.pem", "*.key", "id_ed25519*", ".aws/"] {
+            assert!(PATTERNS.contains(&pattern), "{pattern} must be ignored");
+        }
+    }
+}

@@ -33,8 +33,8 @@ pub const PREPARE: &[Step] = &[
     step!("Configuring fail2ban", "fail2ban.sh"),
     step!("Checking container isolation", "container_isolation.sh"),
     step!(
-        "Building agent image (may take up to an hour)",
-        "agent_image.sh"
+        "Building base image (may take up to an hour)",
+        "base_image.sh"
     ),
 ];
 

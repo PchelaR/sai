@@ -15,3 +15,4 @@ if [ -n "$owner" ] && [ "$owner" != "$local_path" ]; then
 fi
 
 mkdir -p "$(dirname "$workspace")"
+docker container inspect -f '{{ index .Config.Labels "sai.agent" }}' "$container" 2>/dev/null || true

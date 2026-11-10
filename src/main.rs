@@ -3,14 +3,17 @@ mod attach;
 mod chat;
 mod completions;
 mod config;
+mod doctor;
 mod files;
 mod fingerprint;
 mod ignores;
+mod image;
 mod mutagen;
 mod output;
 mod project;
 mod quote;
 mod remote;
+mod reset;
 mod resolve;
 mod secrets;
 mod setup;
@@ -32,20 +35,24 @@ enum Command {
     Attach {
         #[arg(default_value = ".")]
         dir_path: String,
-        #[arg(long, value_enum, default_value_t)]
-        agent: Agent,
+        #[arg(long, value_enum)]
+        agent: Option<Agent>,
     },
     Chat {
         #[arg(default_value = ".")]
         dir_path: String,
-        #[arg(long, value_enum, default_value_t)]
-        agent: Agent,
+        #[arg(long, value_enum)]
+        agent: Option<Agent>,
     },
     Shell {
         #[arg(default_value = ".")]
         dir_path: String,
-        #[arg(long, value_enum, default_value_t)]
+    },
+    Change {
+        #[arg(value_enum)]
         agent: Agent,
+        #[arg(default_value = ".")]
+        dir_path: String,
     },
     Resolve {
         #[arg(default_value = ".")]
@@ -63,9 +70,11 @@ enum Command {
     },
     List,
     Status,
-    Update {
-        #[arg(long, value_enum, default_value_t)]
-        agent: Agent,
+    Doctor,
+    Update,
+    Reset {
+        #[arg(long)]
+        all: bool,
     },
     Stop {
         name: String,
@@ -95,7 +104,8 @@ async fn main() -> anyhow::Result<()> {
         Command::Setup => setup::run().await,
         Command::Attach { dir_path, agent } => attach::run(&dir_path, agent),
         Command::Chat { dir_path, agent } => chat::run(&dir_path, agent),
-        Command::Shell { dir_path, agent } => shell::run(&dir_path, agent),
+        Command::Shell { dir_path } => shell::run(&dir_path),
+        Command::Change { agent, dir_path } => project::change::run(&dir_path, agent),
         Command::Resolve { dir_path } => resolve::run(&dir_path),
         Command::Snapshots { dir_path } => snapshot::list(&dir_path),
         Command::Restore {
@@ -105,7 +115,9 @@ async fn main() -> anyhow::Result<()> {
         } => snapshot::restore(&dir, &snapshot, path.as_deref()),
         Command::List => project::list::run(),
         Command::Status => status::run(),
-        Command::Update { agent } => update::run(agent),
+        Command::Doctor => doctor::run(),
+        Command::Update => update::run(),
+        Command::Reset { all } => reset::run(all),
         Command::Stop { name } => project::stop::run(&name),
         Command::Rm { name, purge } => project::remove::run(&name, purge),
         Command::Completions { shell } => completions::print(shell, Cli::command()),

@@ -1,3 +1,4 @@
+mod install;
 mod session;
 
 use std::{ffi::OsStr, process::Command};
@@ -12,22 +13,33 @@ use crate::vps::HOST_ALIAS;
 use crate::{files, ignores, output};
 
 const IGNORE_FILE: &str = ".saiignore";
+const LIST_TEMPLATE: &str = "{{ json . }}";
 const MIRROR: &str = "one-way-replica";
 const TWO_WAY: &str = "two-way-safe";
 
 pub fn ensure_installed() -> Result<()> {
-    run(&["version"]).map(|_| ()).context(
-        "mutagen is not installed, see https://mutagen.io/documentation/introduction/installation",
-    )
+    install::binary().map(|_| ())
+}
+
+pub fn terminate_all() -> Result<()> {
+    run(&["sync", "terminate", "--all"]).map(|_| ())
 }
 
 pub fn session(id: &str) -> Result<Option<Session>> {
-    let Ok(output) = run(&["sync", "list", id, "--template", "{{ json . }}"]) else {
+    let Ok(output) = run(&["sync", "list", id, "--template", LIST_TEMPLATE]) else {
         return Ok(None);
     };
-    let sessions: Vec<Session> =
-        serde_json::from_str(&output).context("unexpected output from `mutagen sync list`")?;
-    Ok(sessions.into_iter().next())
+    Ok(parse_sessions(&output)?.into_iter().next())
+}
+
+pub fn sessions() -> Result<Vec<Session>> {
+    parse_sessions(&run(&["sync", "list", "--template", LIST_TEMPLATE])?)
+}
+
+fn parse_sessions(output: &str) -> Result<Vec<Session>> {
+    let sessions: Option<Vec<Session>> =
+        serde_json::from_str(output).context("unexpected output from `mutagen sync list`")?;
+    Ok(sessions.unwrap_or_default())
 }
 
 pub fn sync(project: &Project) -> Result<()> {
@@ -122,7 +134,8 @@ fn ignores(project: &Project) -> Result<Vec<String>> {
 }
 
 fn run<S: AsRef<OsStr>>(args: &[S]) -> Result<String> {
-    let output = Command::new("mutagen")
+    let output = Command::new(install::binary()?)
+        .env("MUTAGEN_DATA_DIRECTORY", install::data_directory()?)
         .args(args)
         .output()
         .context("failed to run mutagen")?;

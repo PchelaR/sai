@@ -20,7 +20,7 @@ pub fn output(script: &str, args: &[&str]) -> Result<String> {
 
 pub fn interactive(command: &str) -> Result<()> {
     let status = Command::new("ssh")
-        .arg("-t")
+        .args(["-t", "-q"])
         .arg(HOST_ALIAS)
         .arg(command)
         .status()

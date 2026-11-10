@@ -4,6 +4,8 @@ use serde::Deserialize;
 #[serde(rename_all = "camelCase")]
 pub struct Session {
     #[serde(default)]
+    pub name: String,
+    #[serde(default)]
     pub paused: bool,
     #[serde(default)]
     pub status: String,
@@ -93,5 +95,57 @@ impl Session {
             .chain(conflicts)
             .chain(problems)
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Session;
+
+    const WATCHING: &str = r#"{"name":"sai-app","paused":false,"status":"watching","ignore":{"paths":["target/"],"vcs":true},"alpha":{"connected":true},"beta":{"connected":true},"successfulCycles":4}"#;
+
+    #[test]
+    fn parses_empty_session_lists() {
+        assert!(super::super::parse_sessions("null").unwrap().is_empty());
+        assert_eq!(
+            super::super::parse_sessions(&format!("[{WATCHING}]"))
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    fn parse(json: &str) -> Session {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn healthy_session_has_no_issues() {
+        let session = parse(WATCHING);
+        assert_eq!(session.name, "sai-app");
+        assert!(session.issues().is_empty());
+        assert_eq!(session.summary(), "watching");
+        assert_eq!(session.ignore.paths, ["target/"]);
+    }
+
+    #[test]
+    fn paused_session_is_not_reported_as_disconnected() {
+        let session = parse(r#"{"paused":true,"status":"disconnected"}"#);
+        assert!(session.issues().is_empty());
+        assert_eq!(session.summary(), "paused");
+    }
+
+    #[test]
+    fn reports_every_problem() {
+        let session = parse(
+            r#"{"status":"watching","lastError":"boom","conflicts":[{"root":"a.txt"}],"alpha":{"connected":true,"scanProblems":[{"path":"b","error":"denied"}]},"beta":{"connected":false}}"#,
+        );
+        let issues = session.issues();
+        assert_eq!(issues.len(), 4);
+        assert!(issues.iter().any(|issue| issue.contains("boom")));
+        assert!(issues.iter().any(|issue| issue.contains("a.txt")));
+        assert!(issues.iter().any(|issue| issue.contains("denied")));
+        assert!(issues.iter().any(|issue| issue.contains("VPS")));
+        assert_eq!(session.summary(), "watching, 4 issue(s)");
     }
 }

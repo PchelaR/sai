@@ -54,12 +54,16 @@ take() {
 
 prune() {
   local root=$snapshots/$1
-  local now recent=0 last_day= stamp age day
+  local now recent=0 last_day= newest=1 stamp age day
   now=$(date -u +%s)
   for stamp in $(stamps "$1" | sort -r); do
     age=$((now - $(epoch "$stamp")))
     day=${stamp:0:8}
-    if [ "$age" -lt "$recent_seconds" ] && [ "$recent" -lt "$recent_limit" ]; then
+    if [ -n "$newest" ]; then
+      newest=
+      recent=1
+      last_day=$day
+    elif [ "$age" -lt "$recent_seconds" ] && [ "$recent" -lt "$recent_limit" ]; then
       recent=$((recent + 1))
     elif [ "$age" -lt "$daily_seconds" ] && [ "$day" != "$last_day" ]; then
       last_day=$day
@@ -125,8 +129,15 @@ case "${1:-}" in
         take "$(basename "$dir")"
       fi
     done
+    for dir in "$snapshots"/*/; do
+      if [ -d "$dir" ]; then
+        prune "$(basename "$dir")"
+      fi
+    done
+    free_space
     ;;
   list) list "$2" ;;
   restore) restore "$2" "$3" "${4:-}" ;;
-  *) fail "usage: snapshots take|take-all|list|restore" ;;
+  purge) rm -rf "${snapshots:?}/$2" ;;
+  *) fail "usage: snapshots take|take-all|list|restore|purge" ;;
 esac

@@ -1,3 +1,4 @@
+pub mod change;
 pub mod list;
 pub mod remove;
 pub mod stop;
@@ -65,4 +66,31 @@ fn slug(name: &str) -> String {
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("-")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{id, remote_path, slug, validate_name};
+
+    #[test]
+    fn slugs_folder_names() {
+        assert_eq!(slug("My Project"), "my-project");
+        assert_eq!(slug("sai_test.v2"), "sai-test-v2");
+        assert_eq!(slug("--weird__"), "weird");
+        assert_eq!(slug("проект"), "");
+    }
+
+    #[test]
+    fn validates_names() {
+        assert!(validate_name("sai-test").is_ok());
+        assert!(validate_name("").is_err());
+        assert!(validate_name("Sai").is_err());
+        assert!(validate_name("../x").is_err());
+    }
+
+    #[test]
+    fn derives_remote_names() {
+        assert_eq!(id("app"), "sai-app");
+        assert_eq!(remote_path("app"), "/home/sai/projects/app");
+    }
 }

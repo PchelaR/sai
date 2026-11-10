@@ -4,6 +4,10 @@ use anyhow::{Context, Result, ensure};
 use etcetera::BaseStrategy;
 use serde::Deserialize;
 
+use crate::files;
+
+const CONFIG_FILE: &str = "config.toml";
+const INSTRUCTIONS_FILE: &str = "AGENTS.md";
 const EXAMPLE: &str = r#"ssh_key = "~/.ssh/id_ed25519"
 ip = "1.2.3.4""#;
 
@@ -44,9 +48,14 @@ impl Config {
     }
 }
 
+pub fn instructions() -> Result<String> {
+    files::read_or_empty(&dir()?.join(INSTRUCTIONS_FILE))
+}
+
 fn path() -> Result<PathBuf> {
-    Ok(etcetera::choose_base_strategy()?
-        .config_dir()
-        .join("sai")
-        .join("config.toml"))
+    Ok(dir()?.join(CONFIG_FILE))
+}
+
+fn dir() -> Result<PathBuf> {
+    Ok(etcetera::choose_base_strategy()?.config_dir().join("sai"))
 }

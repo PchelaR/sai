@@ -9,11 +9,16 @@ while [ $# -gt 0 ]; do
   printf '%s' "$content" | base64 -d > "$tmp"
   if cmp -s "$tmp" "$path"; then
     rm -f "$tmp"
+    continue
+  fi
+  if [ -e "$path" ]; then
+    cat "$tmp" > "$path"
+    chmod "$mode" "$path"
   else
     install -m "$mode" "$tmp" "$path"
-    rm -f "$tmp"
-    changed=1
   fi
+  rm -f "$tmp"
+  changed=1
 done
 
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"

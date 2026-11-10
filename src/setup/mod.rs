@@ -3,11 +3,10 @@ mod steps;
 
 use anyhow::{Context, Result};
 
-use crate::agent::Agent;
 use crate::config::Config;
-use crate::output;
 use crate::ssh::{self, Env, Session};
 use crate::vps::{HOST_ALIAS, SETUP_MARKER, SSH_PORT, USER};
+use crate::{image, output};
 use steps::Step;
 
 pub async fn run() -> Result<()> {
@@ -47,14 +46,13 @@ async fn lock_down(session: &Session, config: &Config, env: &Env<'_>) -> Result<
 }
 
 fn script_env(config: &Config) -> Result<Vec<(&'static str, String)>> {
-    let image = Agent::default().image()?;
     Ok(vec![
         ("SAI_USER", USER.to_owned()),
         ("SAI_PORT", SSH_PORT.to_string()),
         ("SAI_PUBKEY", config.public_key()?),
         ("SAI_SETUP_MARKER", SETUP_MARKER.to_owned()),
-        ("SAI_IMAGE", image.reference()),
-        ("SAI_DOCKERFILE", image.encoded_dockerfile()),
+        ("SAI_IMAGE", image::base()),
+        ("SAI_DOCKERFILE", image::encoded_base()),
     ])
 }
 

@@ -54,3 +54,19 @@ fn without_block(content: &str) -> String {
         .map(|line| format!("{line}\n"))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{BEGIN, END, without_block};
+
+    #[test]
+    fn removes_only_the_sai_block() {
+        let config = format!("Host a\n  User x\n{BEGIN}\nHost sai\n  Port 1\n{END}\nHost b\n");
+        assert_eq!(without_block(&config), "Host a\n  User x\nHost b\n");
+    }
+
+    #[test]
+    fn keeps_configs_without_the_block() {
+        assert_eq!(without_block("Host a\n"), "Host a\n");
+    }
+}
