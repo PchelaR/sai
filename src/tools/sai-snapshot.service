@@ -1,0 +1,6 @@
+[Unit]
+Description=sai project snapshots
+
+[Service]
+Type=oneshot
+ExecStart=%h/.sai/bin/snapshots take-all
