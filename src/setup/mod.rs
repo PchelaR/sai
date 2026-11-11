@@ -13,10 +13,10 @@ pub async fn run() -> Result<()> {
     let config = Config::load()?;
     if ssh::is_setup_complete(&config) {
         ssh::install_host_alias(&config)?;
-        println!(
+        output::info(&format!(
             "{} is already configured. Connect with: ssh {HOST_ALIAS}",
             config.ip
-        );
+        ));
         return Ok(());
     }
 
@@ -31,10 +31,10 @@ pub async fn run() -> Result<()> {
     }
 
     ssh::install_host_alias(&config)?;
-    println!(
+    output::info(&format!(
         "Done. {} is configured. Connect with: ssh {HOST_ALIAS}",
         config.ip
-    );
+    ));
     Ok(())
 }
 

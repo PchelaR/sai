@@ -3,11 +3,13 @@ mod attach;
 mod chat;
 mod completions;
 mod config;
+mod console;
 mod doctor;
 mod files;
 mod fingerprint;
 mod ignores;
 mod image;
+mod logs;
 mod mutagen;
 mod output;
 mod project;
@@ -25,6 +27,8 @@ mod tools;
 mod tui;
 mod update;
 mod vps;
+
+use std::env;
 
 use agent::Agent;
 use clap::{CommandFactory, Parser, Subcommand};
@@ -72,6 +76,7 @@ enum Command {
     List,
     Status,
     Doctor,
+    Logs,
     Update,
     Reset {
         #[arg(long)]
@@ -100,7 +105,20 @@ struct Cli {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    let arguments = env::args().skip(1).collect::<Vec<_>>().join(" ");
+    logs::start(if arguments.is_empty() {
+        "tui"
+    } else {
+        &arguments
+    });
+    let result = run(cli).await;
+    if let Err(error) = &result {
+        logs::error(error);
+    }
+    result
+}
 
+async fn run(cli: Cli) -> anyhow::Result<()> {
     let Some(command) = cli.command else {
         return tui::run();
     };
@@ -121,6 +139,7 @@ async fn main() -> anyhow::Result<()> {
         Command::List => project::list::run(),
         Command::Status => status::run(),
         Command::Doctor => doctor::run(),
+        Command::Logs => logs::report(),
         Command::Update => update::run(),
         Command::Reset { all } => reset::run(all),
         Command::Stop { name } => project::stop::run(&name),

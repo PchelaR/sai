@@ -10,7 +10,7 @@ use anyhow::Result;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 
-use crate::mutagen;
+use crate::{console, mutagen};
 use actions::{Action, Progress};
 use app::{App, Outcome};
 use loader::Loaded;
@@ -18,6 +18,7 @@ use loader::Loaded;
 const TICK: Duration = Duration::from_millis(100);
 
 pub fn run() -> Result<()> {
+    console::ensure_supported()?;
     mutagen::ensure_installed()?;
     let mut terminal = ratatui::init();
     let result = event_loop(&mut terminal);

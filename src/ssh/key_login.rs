@@ -1,8 +1,11 @@
+use std::env;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, ensure};
 
 use crate::config::Config;
+use crate::output;
 use crate::vps::{SETUP_MARKER, SSH_PORT, USER};
 
 pub fn verify(config: &Config) -> Result<()> {
@@ -14,7 +17,38 @@ pub fn is_setup_complete(config: &Config) -> bool {
 }
 
 fn run(config: &Config, command: &str) -> Result<()> {
-    let output = Command::new("ssh")
+    match attempt(config, command) {
+        Err(error) if cfg!(windows) && super::is_unprotected_key(&error.to_string()) => {
+            protect(&config.private_key()?)?;
+            attempt(config, command)
+        }
+        result => result,
+    }
+}
+
+fn protect(key: &Path) -> Result<()> {
+    let user = env::var("USERNAME").context("USERNAME is not set")?;
+    output::info(&format!(
+        "Restricting access to {} so that ssh accepts it",
+        key.display()
+    ));
+    let status = Command::new("icacls")
+        .arg(key)
+        .args(["/inheritance:r", "/grant:r"])
+        .arg(format!("{user}:F"))
+        .stdout(Stdio::null())
+        .status()
+        .context("failed to run icacls")?;
+    ensure!(
+        status.success(),
+        "failed to restrict access to {}",
+        key.display()
+    );
+    Ok(())
+}
+
+fn attempt(config: &Config, command: &str) -> Result<()> {
+    let output = Command::new(super::program("ssh"))
         .args(["-F", "none"])
         .arg("-i")
         .arg(config.private_key()?)

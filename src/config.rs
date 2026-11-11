@@ -26,7 +26,12 @@ impl Config {
                 path.display()
             )
         })?;
-        toml::from_str(&content).with_context(|| format!("invalid config at {}", path.display()))
+        toml::from_str(content.trim_start_matches('\u{feff}')).with_context(|| {
+            format!(
+                "invalid config at {}, write Windows paths with / or in single quotes",
+                path.display()
+            )
+        })
     }
 
     pub fn private_key(&self) -> Result<PathBuf> {

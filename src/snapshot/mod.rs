@@ -58,6 +58,8 @@ pub fn restore(dir_path: &str, snapshot: &str, path: Option<&str>) -> Result<()>
         "{} is not attached, run `sai chat {dir_path}` first",
         project.name
     );
+    let path = path.map(|path| path.replace('\\', "/"));
+    let path = path.as_deref();
     if let Some(path) = path {
         validate_path(path)?;
     }

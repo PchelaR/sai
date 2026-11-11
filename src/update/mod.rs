@@ -4,7 +4,10 @@ use clap::ValueEnum;
 use crate::agent::Agent;
 use crate::{image, output, remote};
 
-const UPDATE_IMAGES: &str = include_str!("scripts/update_images.sh");
+const UPDATE_IMAGES: &str = concat!(
+    include_str!("../image/build.sh"),
+    include_str!("scripts/update_images.sh")
+);
 
 pub fn run() -> Result<()> {
     output::step("Rebuilding images with the latest versions (may take up to an hour)");

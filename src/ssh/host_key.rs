@@ -5,8 +5,8 @@ use dialoguer::Confirm;
 use russh::client;
 use russh::keys::{self, HashAlg, PublicKey, PublicKeyOrCertificate};
 
-use crate::mutagen;
 use crate::vps::{HOST_ALIAS, SSH_PORT};
+use crate::{mutagen, output};
 
 const PASSWORD_PORT: u16 = 22;
 
@@ -43,10 +43,10 @@ impl client::Handler for HostKeyPolicy {
 }
 
 fn trust_on_first_use(host: &str, key: &PublicKey, known_hosts: &Path) -> Result<bool> {
-    println!(
+    output::info(&format!(
         "Host key fingerprint of {host}: {}",
         key.fingerprint(HashAlg::Sha256)
-    );
+    ));
     let trusted = Confirm::new()
         .with_prompt("Trust this host?")
         .default(false)
@@ -58,10 +58,10 @@ fn trust_on_first_use(host: &str, key: &PublicKey, known_hosts: &Path) -> Result
 }
 
 fn replace_changed_key(host: &str, key: &PublicKey, known_hosts: &Path) -> Result<bool> {
-    println!(
+    output::info(&format!(
         "Host key of {host} has changed, new fingerprint: {}",
         key.fingerprint(HashAlg::Sha256)
-    );
+    ));
     let reinstalled = Confirm::new()
         .with_prompt("Was the VPS reinstalled? sai will forget the old one and its syncs")
         .default(false)
@@ -75,9 +75,11 @@ fn replace_changed_key(host: &str, key: &PublicKey, known_hosts: &Path) -> Resul
 
 fn forget_old_vps(host: &str) -> Result<()> {
     for entry in [host.to_owned(), format!("[{host}]:{SSH_PORT}")] {
-        Command::new("ssh-keygen").args(["-R", &entry]).output()?;
+        Command::new(super::program("ssh-keygen"))
+            .args(["-R", &entry])
+            .output()?;
     }
-    Command::new("ssh")
+    Command::new(super::program("ssh"))
         .args(["-O", "exit", HOST_ALIAS])
         .output()?;
     mutagen::terminate_all()

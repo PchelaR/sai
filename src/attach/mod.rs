@@ -8,7 +8,10 @@ use crate::{fingerprint, image, mutagen, output, remote, secrets, snapshot, ssh,
 
 const PREPARE_PROJECT: &str = include_str!("scripts/prepare_project.sh");
 const REMOVE_SECRETS: &str = include_str!("scripts/remove_secrets.sh");
-const ENSURE_IMAGE: &str = include_str!("scripts/ensure_image.sh");
+const ENSURE_IMAGE: &str = concat!(
+    include_str!("../image/build.sh"),
+    include_str!("scripts/ensure_image.sh")
+);
 const ENSURE_CONTAINER: &str = include_str!("scripts/ensure_container.sh");
 
 pub struct Attached {

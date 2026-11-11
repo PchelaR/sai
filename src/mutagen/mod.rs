@@ -8,9 +8,9 @@ use anyhow::{Context, Result, ensure};
 use session::Session;
 
 use crate::project::Project;
-use crate::secrets;
 use crate::vps::HOST_ALIAS;
-use crate::{files, ignores, output};
+use crate::{files, ignores, logs, output};
+use crate::{secrets, ssh};
 
 const IGNORE_FILE: &str = ".saiignore";
 const LIST_TEMPLATE: &str = "{{ json . }}";
@@ -19,6 +19,10 @@ const TWO_WAY: &str = "two-way-safe";
 
 pub fn ensure_installed() -> Result<()> {
     install::binary().map(|_| ())
+}
+
+pub fn describe() -> Result<String> {
+    run(&["sync", "list"])
 }
 
 pub fn terminate_all() -> Result<()> {
@@ -134,15 +138,24 @@ fn ignores(project: &Project) -> Result<Vec<String>> {
 }
 
 fn run<S: AsRef<OsStr>>(args: &[S]) -> Result<String> {
-    let output = Command::new(install::binary()?)
-        .env("MUTAGEN_DATA_DIRECTORY", install::data_directory()?)
+    let mut command = Command::new(install::binary()?);
+    command.env("MUTAGEN_DATA_DIRECTORY", install::data_directory()?);
+    if let Some(dir) = ssh::windows_openssh() {
+        command.env("MUTAGEN_SSH_PATH", dir);
+    }
+    let output = command
         .args(args)
         .output()
         .context("failed to run mutagen")?;
-    ensure!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        logs::line(&format!(
+            "mutagen {} failed with {}: {}",
+            logs::describe(args),
+            output.status,
+            stderr.trim()
+        ));
+    }
+    ensure!(output.status.success(), "{}", stderr.trim());
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }

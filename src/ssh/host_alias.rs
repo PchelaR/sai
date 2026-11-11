@@ -32,7 +32,11 @@ fn host_block(config: &Config) -> Result<String> {
     Ok(format!(
         "{BEGIN}\nHost {HOST_ALIAS}\n    HostName {}\n    Port {SSH_PORT}\n    User {USER}\n    IdentityFile \"{}\"\n    IdentitiesOnly yes\n    ServerAliveInterval 30\n{multiplexing}{END}\n",
         config.ip,
-        config.private_key()?.display()
+        config
+            .private_key()?
+            .display()
+            .to_string()
+            .replace('\\', "/")
     ))
 }
 

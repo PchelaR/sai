@@ -9,6 +9,7 @@ macro_rules! step {
             title: $title,
             script: concat!(
                 include_str!("scripts/prelude.sh"),
+                include_str!("../image/build.sh"),
                 include_str!(concat!("scripts/", $file))
             ),
         }

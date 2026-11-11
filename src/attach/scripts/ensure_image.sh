@@ -10,6 +10,6 @@ fi
 
 if ! docker image inspect "$image" >/dev/null 2>&1; then
   echo "==> Building $agent image"
-  printf '%s' "$dockerfile" | base64 -d | docker build -q -t "$image" --build-arg BASE="$base" - >/dev/null
+  printf '%s' "$dockerfile" | base64 -d | docker_build -t "$image" --build-arg BASE="$base" -
   docker builder prune -af >/dev/null 2>&1 || true
 fi

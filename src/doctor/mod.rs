@@ -1,11 +1,12 @@
 mod report;
 
+use std::path::Path;
 use std::process::Command;
 
 use anyhow::{Context, Result, ensure};
 
 use crate::config::Config;
-use crate::{image, mutagen, remote, ssh};
+use crate::{console, image, mutagen, remote, ssh};
 use report::Report;
 
 const VPS_CHECKS: &str = include_str!("scripts/vps_checks.sh");
@@ -18,7 +19,8 @@ pub fn run() -> Result<()> {
     if let Some(config) = &config {
         report.check("ssh key", config.public_key());
     }
-    report.check("ssh client", installed("ssh", "-V"));
+    report.check("ssh client", installed(&ssh::program("ssh"), "-V"));
+    report.check("terminal", console::ensure_supported());
     report.check("mutagen", mutagen::ensure_installed());
 
     let Some(config) = config else {
@@ -46,12 +48,16 @@ pub fn run() -> Result<()> {
     report.finish()
 }
 
-fn installed(program: &str, version_flag: &str) -> Result<()> {
+fn installed(program: &Path, version_flag: &str) -> Result<()> {
     let output = Command::new(program)
         .arg(version_flag)
         .output()
-        .with_context(|| format!("{program} is not installed"))?;
-    ensure!(output.status.success(), "{program} does not work");
+        .with_context(|| format!("{} is not installed", program.display()))?;
+    ensure!(
+        output.status.success(),
+        "{} does not work",
+        program.display()
+    );
     Ok(())
 }
 

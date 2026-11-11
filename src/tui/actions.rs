@@ -7,7 +7,7 @@ use ratatui::DefaultTerminal;
 
 use crate::agent::Agent;
 use crate::project::{change, remove, stop};
-use crate::{attach, chat, doctor, output, reset, shell, snapshot, update};
+use crate::{attach, chat, doctor, logs, output, reset, shell, snapshot, update};
 
 pub enum Action {
     Open(Session),
@@ -34,6 +34,7 @@ pub enum Task {
     },
     Update,
     Doctor,
+    Logs,
     Reset,
 }
 
@@ -53,6 +54,7 @@ impl Task {
             Task::Remove { name, purge: true } => format!("rm {name} --purge"),
             Task::Update => "update".to_owned(),
             Task::Doctor => "doctor".to_owned(),
+            Task::Logs => "logs".to_owned(),
             Task::Reset => "reset".to_owned(),
         }
     }
@@ -65,6 +67,7 @@ pub fn open(terminal: &mut DefaultTerminal, session: Session) -> Result<()> {
         Session::Shell(path) => shell::run(&path),
     };
     if let Err(error) = &result {
+        logs::error(error);
         eprintln!("Error: {error:#}");
         wait_for_enter()?;
     }
@@ -79,7 +82,10 @@ pub fn spawn(task: Task) -> Receiver<Progress> {
         output::capture(move |line| {
             lines.send(Progress::Line(line)).ok();
         });
-        let result = execute(task).map_err(|error| format!("{error:#}"));
+        let result = execute(task).map_err(|error| {
+            logs::error(&error);
+            format!("{error:#}")
+        });
         sender.send(Progress::Done(result)).ok();
     });
     receiver
@@ -98,6 +104,7 @@ fn execute(task: Task) -> Result<()> {
         Task::Remove { name, purge } => remove::run(&name, purge),
         Task::Update => update::run(),
         Task::Doctor => doctor::run(),
+        Task::Logs => logs::report(),
         Task::Reset => reset::execute(false),
     }
 }

@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 use crate::output;
 
 const VERSION: &str = "0.18.1";
+const ARCHIVE: &str = "mutagen.tar.gz";
 const RELEASES: &str = "https://github.com/mutagen-io/mutagen/releases/download";
 const PLATFORMS: &[(&str, &str, &str, &str)] = &[
     (
@@ -117,12 +118,12 @@ fn install(dir: &Path) -> Result<()> {
         fs::remove_dir_all(&staging)?;
     }
     fs::create_dir_all(&staging)?;
-    let archive = staging.join("mutagen.tar.gz");
+    let archive = staging.join(ARCHIVE);
     let url = format!("{RELEASES}/v{VERSION}/mutagen_{platform}_v{VERSION}.tar.gz");
 
     let downloaded = Command::new("curl")
-        .args(["-fsSL", "-o"])
-        .arg(&archive)
+        .current_dir(&staging)
+        .args(["-fsSL", "-o", ARCHIVE])
         .arg(&url)
         .status()
         .context("failed to run curl")?;
@@ -133,10 +134,8 @@ fn install(dir: &Path) -> Result<()> {
     verify(&archive, checksum)?;
 
     let extracted = Command::new("tar")
-        .arg("-xzf")
-        .arg(&archive)
-        .arg("-C")
-        .arg(&staging)
+        .current_dir(&staging)
+        .args(["-xzf", ARCHIVE])
         .status()
         .context("failed to run tar")?;
     ensure!(extracted.success(), "failed to unpack mutagen");

@@ -188,6 +188,7 @@ impl App {
             General::Attach => self.ask(Input::Attach, current_dir()),
             General::Update => run(Task::Update),
             General::Doctor => run(Task::Doctor),
+            General::Logs => run(Task::Logs),
             General::Reset => self.ask(Input::ResetConfirmation, String::new()),
             General::Refresh => Some(Outcome::Refresh),
             General::Quit => Some(Outcome::Quit),
@@ -381,7 +382,10 @@ fn current_dir() -> String {
 }
 
 fn expand_home(input: &str) -> String {
-    match (input.strip_prefix("~/"), etcetera::home_dir()) {
+    let relative = input
+        .strip_prefix("~/")
+        .or_else(|| input.strip_prefix("~\\"));
+    match (relative, etcetera::home_dir()) {
         (Some(relative), Ok(home)) => home.join(relative).display().to_string(),
         _ => input.to_owned(),
     }
