@@ -2,7 +2,10 @@ use anyhow::{Result, ensure};
 
 use crate::{mutagen, output, remote, snapshot};
 
-const REMOVE: &str = include_str!("scripts/remove.sh");
+const REMOVE: &str = concat!(
+    include_str!("scripts/remove.sh"),
+    include_str!("scripts/remove_unused_images.sh")
+);
 
 pub fn run(name: &str, purge: bool) -> Result<()> {
     super::validate_name(name)?;

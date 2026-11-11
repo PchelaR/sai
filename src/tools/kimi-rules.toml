@@ -32,3 +32,9 @@ reason = "Commits are made by the user"
 decision = "deny"
 pattern = "Bash(git push*)"
 reason = "Pushes are made by the user"
+
+[[hooks]]
+event = "PreToolUse"
+matcher = "Bash"
+command = "/usr/local/bin/sai-kimi-guard"
+timeout = 10

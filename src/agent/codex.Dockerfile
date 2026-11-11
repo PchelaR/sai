@@ -1,6 +1,8 @@
 ARG BASE
 FROM ${BASE}
 
+RUN printf '%s\n' 'set -g extended-keys on' 'set -sg escape-time 100' > /home/agent/.tmux.conf
+
 USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends nodejs npm \

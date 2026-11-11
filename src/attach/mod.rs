@@ -57,8 +57,8 @@ pub fn ensure(dir_path: &str, requested: Option<Agent>) -> Result<Attached> {
         ],
     )?;
 
-    let spec = fingerprint::of(ENSURE_CONTAINER);
     let mounts = tools::read_only_mounts(agent);
+    let spec = fingerprint::of(&format!("{ENSURE_CONTAINER}{}", mounts.join("\n")));
     let mut container_args = vec![
         id.as_str(),
         remote_path.as_str(),

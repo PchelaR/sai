@@ -4,7 +4,10 @@ use super::Project;
 use crate::agent::Agent;
 use crate::{attach, output, remote};
 
-const RELEASE_AGENT: &str = include_str!("scripts/release_agent.sh");
+const RELEASE_AGENT: &str = concat!(
+    include_str!("scripts/release_agent.sh"),
+    include_str!("scripts/remove_unused_images.sh")
+);
 
 pub fn run(dir_path: &str, agent: Agent) -> Result<()> {
     let project = Project::open(dir_path)?;

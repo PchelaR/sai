@@ -13,6 +13,7 @@ const CLAUDE_POLICY: &str = include_str!("claude-managed-settings.json");
 const CODEX_RULES: &str = include_str!("codex.rules");
 const KIMI_RULES: &str = include_str!("kimi-rules.toml");
 const KIMI_START: &str = include_str!("kimi-start.sh");
+const KIMI_GUARD: &str = include_str!("kimi-guard.sh");
 const EXECUTABLE: &str = "755";
 const READABLE: &str = "644";
 
@@ -20,6 +21,7 @@ const CLAUDE_POLICY_FILE: &str = "claude-managed-settings.json";
 const CODEX_RULES_FILE: &str = "codex.rules";
 const KIMI_RULES_FILE: &str = "kimi-rules.toml";
 const KIMI_START_FILE: &str = "kimi-start.sh";
+const KIMI_GUARD_FILE: &str = "kimi-guard.sh";
 const INSTRUCTIONS_FILE: &str = "instructions.md";
 
 pub fn snapshots_path() -> String {
@@ -45,6 +47,7 @@ pub fn install(instructions: &str) -> Result<()> {
         (file(CODEX_RULES_FILE), READABLE, CODEX_RULES.to_owned()),
         (file(KIMI_RULES_FILE), READABLE, KIMI_RULES.to_owned()),
         (file(KIMI_START_FILE), EXECUTABLE, KIMI_START.to_owned()),
+        (file(KIMI_GUARD_FILE), EXECUTABLE, KIMI_GUARD.to_owned()),
         (file(INSTRUCTIONS_FILE), READABLE, instructions.to_owned()),
     ];
     let args: Vec<String> = files
@@ -70,6 +73,7 @@ pub fn read_only_mounts(agent: Agent) -> Vec<String> {
         Agent::Kimi => &[
             (KIMI_RULES_FILE, "/etc/sai/kimi-rules.toml"),
             (KIMI_START_FILE, "/usr/local/bin/sai-kimi"),
+            (KIMI_GUARD_FILE, "/usr/local/bin/sai-kimi-guard"),
             (INSTRUCTIONS_FILE, "/state/AGENTS.md"),
         ],
     };
@@ -103,6 +107,7 @@ mod tests {
         let kimi = read_only_mounts(Agent::Kimi).join(" ");
         assert!(kimi.contains("/etc/sai/kimi-rules.toml"));
         assert!(kimi.contains("/usr/local/bin/sai-kimi"));
+        assert!(kimi.contains("/usr/local/bin/sai-kimi-guard"));
         assert!(kimi.contains("/state/AGENTS.md"));
         assert!(!kimi.contains("claude") && !kimi.contains("codex"));
         assert!(claude.contains("/etc/claude-code/managed-settings.json"));
