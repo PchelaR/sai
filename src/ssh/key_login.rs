@@ -6,7 +6,7 @@ use anyhow::{Context, Result, ensure};
 
 use crate::config::Config;
 use crate::output;
-use crate::vps::{SETUP_MARKER, SSH_PORT, USER};
+use crate::vps::{SETUP_MARKER, USER};
 
 pub fn verify(config: &Config) -> Result<()> {
     run(config, "true")
@@ -53,7 +53,7 @@ fn attempt(config: &Config, command: &str) -> Result<()> {
         .arg("-i")
         .arg(config.private_key()?)
         .arg("-p")
-        .arg(SSH_PORT.to_string())
+        .arg(config.port().to_string())
         .args(["-o", "ConnectTimeout=10"])
         .args(["-o", "StrictHostKeyChecking=yes"])
         .args(["-o", "IdentitiesOnly=yes"])

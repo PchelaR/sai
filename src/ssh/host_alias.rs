@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 
 use crate::config::Config;
 use crate::files;
-use crate::vps::{HOST_ALIAS, SSH_PORT, USER};
+use crate::vps::{HOST_ALIAS, USER};
 
 const BEGIN: &str = "# BEGIN sai";
 const END: &str = "# END sai";
@@ -30,8 +30,9 @@ pub fn install(config: &Config) -> Result<()> {
 fn host_block(config: &Config) -> Result<String> {
     let multiplexing = if cfg!(windows) { "" } else { MULTIPLEXING };
     Ok(format!(
-        "{BEGIN}\nHost {HOST_ALIAS}\n    HostName {}\n    Port {SSH_PORT}\n    User {USER}\n    IdentityFile \"{}\"\n    IdentitiesOnly yes\n    ServerAliveInterval 30\n{multiplexing}{END}\n",
+        "{BEGIN}\nHost {HOST_ALIAS}\n    HostName {}\n    Port {}\n    User {USER}\n    IdentityFile \"{}\"\n    IdentitiesOnly yes\n    ServerAliveInterval 30\n{multiplexing}{END}\n",
         config.ip,
+        config.port(),
         config
             .private_key()?
             .display()

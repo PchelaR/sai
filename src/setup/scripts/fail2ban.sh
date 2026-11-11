@@ -1,3 +1,4 @@
+apt_get install fail2ban python3-systemd
 cat > /etc/fail2ban/jail.d/zz-sai.local <<CONF
 [sshd]
 enabled = true

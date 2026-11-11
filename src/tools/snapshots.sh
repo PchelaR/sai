@@ -24,10 +24,7 @@ epoch() {
 }
 
 filters() {
-  filter_args=(--exclude-from="$excludes")
-  if [ -f "$projects/$1/.saiignore" ]; then
-    filter_args+=(--exclude-from="$projects/$1/.saiignore")
-  fi
+  filter_args=(--exclude-from="$excludes" --filter=':- .saiignore')
 }
 
 take() {
@@ -96,22 +93,31 @@ list() {
 }
 
 restore() {
-  local name=$1 stamp=$2 path=${3:-}
+  local name=$1 stamp=$2 path=$3
+  shift 3
   local source=$snapshots/$name/$stamp
   local target=$projects/$name
+  local folder
   if [[ "$stamp" == *.partial ]] || [ ! -d "$source" ]; then
     fail "snapshot $stamp not found, see \`sai snapshots\`"
   fi
   take "$name"
   filters "$name"
   if [ -z "$path" ]; then
-    rsync -a --delete "${filter_args[@]}" "$source/" "$target/"
+    for folder in "$@"; do
+      if [ -d "$source/$folder" ]; then
+        mkdir -p "$target/$folder"
+        rsync -a --checksum --delete "${filter_args[@]}" "$source/$folder/" "$target/$folder/"
+      else
+        echo "$folder is not in snapshot $stamp, left as is"
+      fi
+    done
   elif [ -d "$source/$path" ]; then
     mkdir -p "$target/$path"
-    rsync -a --delete "${filter_args[@]}" "$source/$path/" "$target/$path/"
+    rsync -a --checksum --delete "${filter_args[@]}" "$source/$path/" "$target/$path/"
   elif [ -e "$source/$path" ]; then
     mkdir -p "$(dirname "$target/$path")"
-    rsync -a "$source/$path" "$target/$path"
+    rsync -a --checksum "$source/$path" "$target/$path"
   else
     fail "$path is not in snapshot $stamp"
   fi
@@ -137,7 +143,7 @@ case "${1:-}" in
     free_space
     ;;
   list) list "$2" ;;
-  restore) restore "$2" "$3" "${4:-}" ;;
+  restore) shift; restore "$@" ;;
   purge) rm -rf "${snapshots:?}/$2" ;;
   *) fail "usage: snapshots take|take-all|list|restore|purge" ;;
 esac

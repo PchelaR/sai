@@ -1,6 +1,6 @@
 container=$1
 workspace=$2
-local_path=$3
+project=$3
 image=$4
 spec=$5
 agent=$6
@@ -37,7 +37,7 @@ else
   docker run -d --init \
     --name "$container" \
     --hostname "${container#sai-}" \
-    --label "sai.path=$local_path" \
+    --label "sai.project=$project" \
     --label "sai.spec=$spec" \
     --label "sai.agent=$agent" \
     --network sai-net \

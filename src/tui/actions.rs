@@ -6,7 +6,7 @@ use anyhow::Result;
 use ratatui::DefaultTerminal;
 
 use crate::agent::Agent;
-use crate::project::{change, remove, stop};
+use crate::project::{Registry, change, detach, remove, rename, stop};
 use crate::{attach, chat, doctor, logs, output, reset, shell, snapshot, update};
 
 pub enum Action {
@@ -20,10 +20,23 @@ pub enum Session {
 }
 
 pub enum Task {
-    Attach(String, Agent),
-    Change(String, Agent),
-    Restore {
+    Attach {
+        project: String,
         path: String,
+        agent: Option<Agent>,
+        large: bool,
+    },
+    Detach {
+        project: String,
+        path: String,
+    },
+    Change(String, Agent),
+    Rename {
+        project: String,
+        name: String,
+    },
+    Restore {
+        project: String,
         snapshot: String,
         target: Option<String>,
     },
@@ -46,8 +59,16 @@ pub enum Progress {
 impl Task {
     pub fn title(&self) -> String {
         match self {
-            Task::Attach(path, agent) => format!("attach {path} --agent {agent}"),
-            Task::Change(path, agent) => format!("change {agent} {path}"),
+            Task::Attach {
+                project,
+                path,
+                agent: Some(agent),
+                ..
+            } => format!("attach {project} {path} --agent {agent}"),
+            Task::Attach { project, path, .. } => format!("attach {project} {path}"),
+            Task::Detach { project, path } => format!("detach {project} {path}"),
+            Task::Change(project, agent) => format!("change {agent} {project}"),
+            Task::Rename { project, name } => format!("rename {project} {name}"),
             Task::Restore { snapshot, .. } => format!("restore {snapshot}"),
             Task::Stop(name) => format!("stop {name}"),
             Task::Remove { name, purge: false } => format!("rm {name}"),
@@ -63,8 +84,8 @@ impl Task {
 pub fn open(terminal: &mut DefaultTerminal, session: Session) -> Result<()> {
     ratatui::restore();
     let result = match session {
-        Session::Chat(path) => chat::run(&path, None),
-        Session::Shell(path) => shell::run(&path),
+        Session::Chat(project) => chat::run(Some(&project), None),
+        Session::Shell(project) => shell::run(Some(&project)),
     };
     if let Err(error) = &result {
         logs::error(error);
@@ -93,14 +114,24 @@ pub fn spawn(task: Task) -> Receiver<Progress> {
 
 fn execute(task: Task) -> Result<()> {
     match task {
-        Task::Attach(path, agent) => attach::run(&path, Some(agent)),
-        Task::Change(path, agent) => change::run(&path, agent),
-        Task::Restore {
+        Task::Attach {
+            project,
             path,
+            agent,
+            large,
+        } => attach::run(&project, &path, agent, None, &move |_, _| Ok(large)),
+        Task::Detach { project, path } => detach::run(&project, &path),
+        Task::Change(project, agent) => change::run(Some(&project), agent),
+        Task::Rename { project, name } => rename::run(&project, &name),
+        Task::Restore {
+            project,
             snapshot,
             target,
-        } => snapshot::restore(&path, &snapshot, target.as_deref()),
-        Task::Stop(name) => stop::run(&name),
+        } => {
+            let registry = Registry::open()?;
+            snapshot::restore(registry.get(&project)?, &snapshot, target.as_deref())
+        }
+        Task::Stop(name) => stop::run(Some(&name)),
         Task::Remove { name, purge } => remove::run(&name, purge),
         Task::Update => update::run(),
         Task::Doctor => doctor::run(),

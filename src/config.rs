@@ -5,6 +5,7 @@ use etcetera::BaseStrategy;
 use serde::Deserialize;
 
 use crate::files;
+use crate::vps::SSH_PORT;
 
 const CONFIG_FILE: &str = "config.toml";
 const INSTRUCTIONS_FILE: &str = "AGENTS.md";
@@ -15,6 +16,7 @@ ip = "1.2.3.4""#;
 pub struct Config {
     ssh_key: String,
     pub ip: String,
+    port: Option<u16>,
 }
 
 impl Config {
@@ -32,6 +34,14 @@ impl Config {
                 path.display()
             )
         })
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port.unwrap_or(SSH_PORT)
+    }
+
+    pub fn custom_port(&self) -> Option<u16> {
+        self.port
     }
 
     pub fn private_key(&self) -> Result<PathBuf> {
@@ -61,6 +71,6 @@ fn path() -> Result<PathBuf> {
     Ok(dir()?.join(CONFIG_FILE))
 }
 
-fn dir() -> Result<PathBuf> {
+pub fn dir() -> Result<PathBuf> {
     Ok(etcetera::choose_base_strategy()?.config_dir().join("sai"))
 }

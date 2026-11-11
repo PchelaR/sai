@@ -2,52 +2,92 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine, prelude::BASE64_STANDARD};
+use russh::keys::{self, PrivateKeyWithHashAlg};
 use russh::{ChannelMsg, client};
 
 use super::host_key::HostKeyPolicy;
+use crate::config::Config;
 use crate::quote;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
-const PASSWORD_PORT: u16 = 22;
 const STDERR_TAIL_LINES: usize = 30;
 
 pub type Env<'a> = [(&'a str, String)];
 
+pub enum Auth {
+    Password(String),
+    Key,
+}
+
+enum Sudo {
+    None,
+    Password(String),
+    NonInteractive,
+}
+
 pub struct Session {
     handle: client::Handle<HostKeyPolicy>,
-    sudo_password: Option<String>,
+    sudo: Sudo,
 }
 
 impl Session {
-    pub async fn connect(ip: &str, user: &str, password: &str) -> Result<Self> {
-        let config = Arc::new(client::Config {
+    pub async fn connect(config: &Config, port: u16, user: &str, auth: Auth) -> Result<Self> {
+        let ip = config.ip.as_str();
+        let client_config = Arc::new(client::Config {
             keepalive_interval: Some(KEEPALIVE_INTERVAL),
             ..Default::default()
         });
-        let connecting = client::connect(config, (ip, PASSWORD_PORT), HostKeyPolicy::new(ip));
+        let policy = HostKeyPolicy::new(ip, port, config.port());
+        let connecting = client::connect(client_config, (ip, port), policy);
         let mut handle = tokio::time::timeout(CONNECT_TIMEOUT, connecting)
             .await
-            .with_context(|| format!("timed out connecting to {ip}:{PASSWORD_PORT}"))?
-            .with_context(|| format!("could not connect to {ip}:{PASSWORD_PORT}"))?;
-        let auth = handle.authenticate_password(user, password).await?;
-        ensure!(auth.success(), "wrong user or password for {user}@{ip}");
-        Ok(Self {
-            handle,
-            sudo_password: (user != "root").then(|| password.to_owned()),
-        })
+            .with_context(|| format!("timed out connecting to {ip}:{port}"))?
+            .with_context(|| format!("could not connect to {ip}:{port}"))?;
+        let accepted = match &auth {
+            Auth::Password(password) => handle.authenticate_password(user, password).await?,
+            Auth::Key => {
+                let path = config.private_key()?;
+                let key = keys::load_secret_key(&path, None).with_context(|| {
+                    format!(
+                        "cannot use {} without a passphrase, enter the password instead",
+                        path.display()
+                    )
+                })?;
+                let hash = handle.best_supported_rsa_hash().await?.flatten();
+                handle
+                    .authenticate_publickey(user, PrivateKeyWithHashAlg::new(Arc::new(key), hash))
+                    .await?
+            }
+        };
+        ensure!(
+            accepted.success(),
+            "{user}@{ip} rejected the login, check the user and the password or key"
+        );
+        let sudo = match auth {
+            _ if user == "root" => Sudo::None,
+            Auth::Password(password) => Sudo::Password(password),
+            Auth::Key => Sudo::NonInteractive,
+        };
+        Ok(Self { handle, sudo })
     }
 
     pub async fn run_script(&self, script: &str, env: &Env<'_>) -> Result<()> {
+        self.output(script, env).await.map(|_| ())
+    }
+
+    pub async fn output(&self, script: &str, env: &Env<'_>) -> Result<String> {
         let mut channel = self.handle.channel_open_session().await?;
         channel.exec(true, self.command(script, env)).await?;
         channel.data(self.stdin().as_bytes()).await?;
         channel.eof().await?;
 
+        let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let mut exit_status = None;
         while let Some(message) = channel.wait().await {
             match message {
+                ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
                 ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
                 ChannelMsg::ExitStatus {
                     exit_status: status,
@@ -57,7 +97,7 @@ impl Session {
         }
 
         match exit_status {
-            Some(0) => Ok(()),
+            Some(0) => Ok(String::from_utf8_lossy(&stdout).into_owned()),
             Some(code) => bail!("exit code {code}\n{}", tail(&stderr)),
             None => bail!("connection closed unexpectedly"),
         }
@@ -65,10 +105,10 @@ impl Session {
 
     fn command(&self, script: &str, env: &Env<'_>) -> String {
         let encoded = BASE64_STANDARD.encode(script);
-        let sudo = if self.sudo_password.is_some() {
-            "sudo -S -p '' "
-        } else {
-            ""
+        let sudo = match self.sudo {
+            Sudo::None => "",
+            Sudo::Password(_) => "sudo -S -p '' ",
+            Sudo::NonInteractive => "sudo -n ",
         };
         let env: String = env
             .iter()
@@ -80,10 +120,10 @@ impl Session {
     }
 
     fn stdin(&self) -> String {
-        self.sudo_password
-            .as_ref()
-            .map(|password| format!("{password}\n"))
-            .unwrap_or_default()
+        match &self.sudo {
+            Sudo::Password(password) => format!("{password}\n"),
+            Sudo::None | Sudo::NonInteractive => String::new(),
+        }
     }
 }
 

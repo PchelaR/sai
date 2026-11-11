@@ -10,7 +10,7 @@ use anyhow::Result;
 
 pub use host_alias::install as install_host_alias;
 pub use key_login::{is_setup_complete, verify as verify_key_login};
-pub use session::{Env, Session};
+pub use session::{Auth, Env, Session};
 
 pub fn program(name: &str) -> PathBuf {
     match windows_openssh() {

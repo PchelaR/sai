@@ -14,6 +14,7 @@ const CODEX_RULES: &str = include_str!("codex.rules");
 const KIMI_RULES: &str = include_str!("kimi-rules.toml");
 const KIMI_START: &str = include_str!("kimi-start.sh");
 const KIMI_GUARD: &str = include_str!("kimi-guard.sh");
+const TMUX: &str = include_str!("tmux.conf");
 const EXECUTABLE: &str = "755";
 const READABLE: &str = "644";
 
@@ -22,6 +23,8 @@ const CODEX_RULES_FILE: &str = "codex.rules";
 const KIMI_RULES_FILE: &str = "kimi-rules.toml";
 const KIMI_START_FILE: &str = "kimi-start.sh";
 const KIMI_GUARD_FILE: &str = "kimi-guard.sh";
+const TMUX_FILE: &str = "tmux.conf";
+const TMUX_TARGET: &str = "/home/agent/.tmux.conf";
 const INSTRUCTIONS_FILE: &str = "instructions.md";
 
 pub fn snapshots_path() -> String {
@@ -48,6 +51,7 @@ pub fn install(instructions: &str) -> Result<()> {
         (file(KIMI_RULES_FILE), READABLE, KIMI_RULES.to_owned()),
         (file(KIMI_START_FILE), EXECUTABLE, KIMI_START.to_owned()),
         (file(KIMI_GUARD_FILE), EXECUTABLE, KIMI_GUARD.to_owned()),
+        (file(TMUX_FILE), READABLE, TMUX.to_owned()),
         (file(INSTRUCTIONS_FILE), READABLE, instructions.to_owned()),
     ];
     let args: Vec<String> = files
@@ -79,6 +83,7 @@ pub fn read_only_mounts(agent: Agent) -> Vec<String> {
     };
     mounts
         .iter()
+        .chain([&(TMUX_FILE, TMUX_TARGET)])
         .map(|(name, target)| format!("{}:{target}", file(name)))
         .collect()
 }
@@ -109,6 +114,9 @@ mod tests {
         assert!(kimi.contains("/usr/local/bin/sai-kimi"));
         assert!(kimi.contains("/usr/local/bin/sai-kimi-guard"));
         assert!(kimi.contains("/state/AGENTS.md"));
+        for mounts in [&claude, &codex, &kimi] {
+            assert!(mounts.contains("/home/agent/.tmux.conf"));
+        }
         assert!(!kimi.contains("claude") && !kimi.contains("codex"));
         assert!(claude.contains("/etc/claude-code/managed-settings.json"));
         assert!(claude.contains("/state/CLAUDE.md"));

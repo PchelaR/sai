@@ -6,6 +6,8 @@ use std::process::Command;
 use anyhow::{Context, Result, ensure};
 
 use crate::config::Config;
+use crate::project::Registry;
+use crate::vps::SETUP_MARKER;
 use crate::{console, image, mutagen, remote, ssh};
 use report::Report;
 
@@ -62,7 +64,9 @@ fn installed(program: &Path, version_flag: &str) -> Result<()> {
 }
 
 fn check_vps(report: &mut Report) -> Result<()> {
-    let output = remote::output(VPS_CHECKS, &[&image::base()])?;
+    let output = remote::output(VPS_CHECKS, &[&image::base(), SETUP_MARKER])?;
+    let registry = Registry::load()?;
+    let mut leftovers = Vec::new();
     for line in output.lines() {
         let mut fields = line.splitn(3, '\t');
         let (Some(status), Some(name)) = (fields.next(), fields.next()) else {
@@ -70,10 +74,21 @@ fn check_vps(report: &mut Report) -> Result<()> {
         };
         let detail = fields.next().unwrap_or_default();
         match status {
+            "project" if registry.find(name).is_none() => leftovers.push(name),
+            "project" => {}
             "ok" => report.ok(name),
             "warn" => report.warn(name, detail),
             _ => report.fail(name, detail),
         }
+    }
+    if !leftovers.is_empty() {
+        report.warn(
+            "files of removed projects",
+            format!(
+                "{} still take space on the VPS, delete them with `sai rm <name> --purge`",
+                leftovers.join(", ")
+            ),
+        );
     }
     Ok(())
 }
@@ -84,12 +99,16 @@ fn check_sync(report: &mut Report) -> Result<()> {
         report.ok("no projects attached yet");
     }
     for session in sessions {
+        let name = session
+            .name
+            .trim_start_matches("sai-")
+            .replacen("--", "/", 1);
         let issues = session.issues();
         if issues.is_empty() {
-            report.ok(&format!("{}: {}", session.name, session.summary()));
+            report.ok(&format!("{name}: {}", session.summary()));
         }
         for issue in issues {
-            report.fail(&session.name, issue);
+            report.fail(&name, issue);
         }
     }
     Ok(())

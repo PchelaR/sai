@@ -1,4 +1,5 @@
 base=$1
+marker=$2
 
 report() {
   printf '%s\t%s\t%s\n' "$1" "$2" "${3:-}"
@@ -10,7 +11,14 @@ else
   report fail "docker" "docker is not running"
 fi
 
-for service in ssh fail2ban ufw sai-firewall; do
+services="ssh sai-firewall"
+if [ "$(cat "$marker" 2>/dev/null)" = minimal ]; then
+  report ok "server hardening skipped (--minimal)"
+else
+  services="$services fail2ban ufw"
+fi
+
+for service in $services; do
   if systemctl is-active --quiet "$service"; then
     report ok "$service"
   else
@@ -47,3 +55,7 @@ if [ "$free_kb" -ge 2097152 ]; then
 else
   report fail "disk space" "less than 2 GB free, remove unused projects with \`sai rm --purge\` or run \`sai reset\`"
 fi
+
+for dir in "$HOME"/projects/*/; do
+  [ -d "$dir" ] && printf 'project\t%s\n' "$(basename "$dir")"
+done

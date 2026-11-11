@@ -10,6 +10,7 @@ use anyhow::Result;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 
+use crate::project::Registry;
 use crate::{console, mutagen};
 use actions::{Action, Progress};
 use app::{App, Outcome};
@@ -20,6 +21,7 @@ const TICK: Duration = Duration::from_millis(100);
 pub fn run() -> Result<()> {
     console::ensure_supported()?;
     mutagen::ensure_installed()?;
+    Registry::open()?;
     let mut terminal = ratatui::init();
     let result = event_loop(&mut terminal);
     ratatui::restore();

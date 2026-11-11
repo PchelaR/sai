@@ -36,42 +36,48 @@ use clap_complete::Shell;
 
 #[derive(Subcommand)]
 enum Command {
-    Setup,
+    Setup {
+        #[arg(long)]
+        minimal: bool,
+    },
     Attach {
+        project: String,
         #[arg(default_value = ".")]
         dir_path: String,
         #[arg(long, value_enum)]
         agent: Option<Agent>,
+        #[arg(long = "as")]
+        alias: Option<String>,
     },
-    Chat {
+    Detach {
+        project: String,
         #[arg(default_value = ".")]
         dir_path: String,
+    },
+    Chat {
+        project: Option<String>,
         #[arg(long, value_enum)]
         agent: Option<Agent>,
     },
     Shell {
-        #[arg(default_value = ".")]
-        dir_path: String,
+        project: Option<String>,
     },
     Change {
         #[arg(value_enum)]
         agent: Agent,
-        #[arg(default_value = ".")]
-        dir_path: String,
+        project: Option<String>,
     },
     Resolve {
-        #[arg(default_value = ".")]
-        dir_path: String,
+        project: Option<String>,
     },
     Snapshots {
-        #[arg(default_value = ".")]
-        dir_path: String,
+        project: Option<String>,
     },
     Restore {
         snapshot: String,
         path: Option<String>,
-        #[arg(long, default_value = ".")]
-        dir: String,
+        #[arg(long)]
+        project: Option<String>,
     },
     List,
     Status,
@@ -83,10 +89,14 @@ enum Command {
         all: bool,
     },
     Stop {
-        name: String,
+        project: Option<String>,
+    },
+    Rename {
+        project: String,
+        new_name: String,
     },
     Rm {
-        name: String,
+        project: String,
         #[arg(long)]
         purge: bool,
     },
@@ -119,31 +129,49 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
+    if !matches!(cli.command, Some(Command::Completions { .. })) {
+        completions::install_quietly(Cli::command());
+    }
     let Some(command) = cli.command else {
         return tui::run();
     };
 
     match command {
-        Command::Setup => setup::run().await,
-        Command::Attach { dir_path, agent } => attach::run(&dir_path, agent),
-        Command::Chat { dir_path, agent } => chat::run(&dir_path, agent),
-        Command::Shell { dir_path } => shell::run(&dir_path),
-        Command::Change { agent, dir_path } => project::change::run(&dir_path, agent),
-        Command::Resolve { dir_path } => resolve::run(&dir_path),
-        Command::Snapshots { dir_path } => snapshot::list(&dir_path),
+        Command::Setup { minimal } => setup::run(minimal).await,
+        Command::Attach {
+            project,
+            dir_path,
+            agent,
+            alias,
+        } => attach::run(
+            &project,
+            &dir_path,
+            agent,
+            alias.as_deref(),
+            &attach::ask_large,
+        ),
+        Command::Detach { project, dir_path } => {
+            project::detach::run_with_confirmation(&project, &dir_path)
+        }
+        Command::Chat { project, agent } => chat::run(project.as_deref(), agent),
+        Command::Shell { project } => shell::run(project.as_deref()),
+        Command::Change { agent, project } => project::change::run(project.as_deref(), agent),
+        Command::Resolve { project } => resolve::run(project.as_deref()),
+        Command::Snapshots { project } => snapshot::list(project.as_deref()),
         Command::Restore {
             snapshot,
             path,
-            dir,
-        } => snapshot::restore_with_confirmation(&dir, &snapshot, path.as_deref()),
+            project,
+        } => snapshot::restore_with_confirmation(project.as_deref(), &snapshot, path.as_deref()),
         Command::List => project::list::run(),
         Command::Status => status::run(),
         Command::Doctor => doctor::run(),
         Command::Logs => logs::report(),
         Command::Update => update::run(),
         Command::Reset { all } => reset::run(all),
-        Command::Stop { name } => project::stop::run(&name),
-        Command::Rm { name, purge } => project::remove::run(&name, purge),
+        Command::Stop { project } => project::stop::run(project.as_deref()),
+        Command::Rename { project, new_name } => project::rename::run(&project, &new_name),
+        Command::Rm { project, purge } => project::remove::run_with_confirmation(&project, purge),
         Command::Completions { shell } => completions::print(shell, Cli::command()),
     }
 }

@@ -3,7 +3,7 @@ use std::path::{Component, Path};
 use anyhow::{Result, ensure};
 use dialoguer::Confirm;
 
-use crate::project::Project;
+use crate::project::{Project, Registry};
 use crate::{mutagen, output, remote, tools};
 
 const RUN: &str = include_str!("run.sh");
@@ -18,14 +18,14 @@ pub fn purge(name: &str) -> Result<()> {
     remote::run(RUN, &[&tools::snapshots_path(), "purge", name])
 }
 
-pub fn list(dir_path: &str) -> Result<()> {
-    let project = Project::open(dir_path)?;
+pub fn list(name: Option<&str>) -> Result<()> {
+    let registry = Registry::open()?;
+    let project = registry.resolve(name)?;
     remote::run(RUN, &[&tools::snapshots_path(), "list", &project.name])
 }
 
-pub fn stamps(dir_path: &str) -> Result<Vec<String>> {
-    let project = Project::open(dir_path)?;
-    let output = remote::output(RUN, &[&tools::snapshots_path(), "list", &project.name])?;
+pub fn stamps(name: &str) -> Result<Vec<String>> {
+    let output = remote::output(RUN, &[&tools::snapshots_path(), "list", name])?;
     Ok(output
         .lines()
         .filter_map(|line| line.split_whitespace().next())
@@ -34,8 +34,15 @@ pub fn stamps(dir_path: &str) -> Result<Vec<String>> {
         .collect())
 }
 
-pub fn restore_with_confirmation(dir_path: &str, snapshot: &str, path: Option<&str>) -> Result<()> {
-    let project = Project::open(dir_path)?;
+pub fn restore_with_confirmation(
+    name: Option<&str>,
+    snapshot: &str,
+    path: Option<&str>,
+) -> Result<()> {
+    let registry = Registry::open()?;
+    let project = registry.resolve(name)?.clone();
+    let path = checked_path(&project, path)?;
+    let path = path.as_deref();
     let target = path.unwrap_or("the whole project");
     let confirmed = Confirm::new()
         .with_prompt(format!(
@@ -48,36 +55,52 @@ pub fn restore_with_confirmation(dir_path: &str, snapshot: &str, path: Option<&s
         output::info("Cancelled");
         return Ok(());
     }
-    restore(dir_path, snapshot, path)
+    restore(&project, snapshot, path)
 }
 
-pub fn restore(dir_path: &str, snapshot: &str, path: Option<&str>) -> Result<()> {
-    let project = Project::open(dir_path)?;
+pub fn restore(project: &Project, snapshot: &str, path: Option<&str>) -> Result<()> {
     ensure!(
-        mutagen::session(&project.id())?.is_some(),
-        "{} is not attached, run `sai chat {dir_path}` first",
+        project
+            .targets()
+            .iter()
+            .any(|target| mutagen::session(&target.id).is_ok_and(|session| session.is_some())),
+        "{} is not syncing, run `sai chat {}` first",
+        project.name,
         project.name
     );
-    let path = path.map(|path| path.replace('\\', "/"));
+    let path = checked_path(project, path)?;
     let path = path.as_deref();
-    if let Some(path) = path {
-        validate_path(path)?;
-    }
-    remote::run(
-        RUN,
-        &[
-            &tools::snapshots_path(),
-            "restore",
-            &project.name,
-            snapshot,
-            path.unwrap_or_default(),
-        ],
-    )?;
+    let mut args = vec![
+        tools::snapshots_path(),
+        "restore".to_owned(),
+        project.name.clone(),
+        snapshot.to_owned(),
+        path.unwrap_or_default().to_owned(),
+    ];
+    args.extend(project.folder_names().iter().map(|name| (*name).to_owned()));
+    remote::run(RUN, &args.iter().map(String::as_str).collect::<Vec<_>>())?;
     output::info(&format!(
-        "Restored {} from {snapshot}. Changes are syncing to your local folder",
+        "Restored {} from {snapshot}. Changes are syncing to your local folders",
         path.unwrap_or("the whole project")
     ));
-    mutagen::report_issues(&project.id())
+    for target in project.targets() {
+        mutagen::report_issues(&target.id)?;
+    }
+    Ok(())
+}
+
+fn checked_path(project: &Project, path: Option<&str>) -> Result<Option<String>> {
+    let Some(path) = path.map(|path| path.replace('\\', "/")) else {
+        return Ok(None);
+    };
+    validate_path(&path)?;
+    let folder = path.split('/').next().unwrap_or_default();
+    ensure!(
+        project.folder_names().contains(&folder),
+        "{path} must start with one of the project folders: {}",
+        project.folder_names().join(", ")
+    );
+    Ok(Some(path))
 }
 
 fn is_stamp(text: &str) -> bool {

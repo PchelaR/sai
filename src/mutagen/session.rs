@@ -37,6 +37,8 @@ struct Conflict {
 #[serde(rename_all = "camelCase")]
 struct Endpoint {
     #[serde(default)]
+    path: String,
+    #[serde(default)]
     connected: bool,
     #[serde(default)]
     scan_problems: Vec<Problem>,
@@ -53,6 +55,10 @@ struct Problem {
 }
 
 impl Session {
+    pub fn local_path(&self) -> &str {
+        &self.alpha.path
+    }
+
     pub fn summary(&self) -> String {
         let state: &str = if self.paused { "paused" } else { &self.status };
         match self.issues().len() {
@@ -72,7 +78,7 @@ impl Session {
             .map(|(side, _)| format!("sync is not connected to the {side}"));
         let conflicts = self.conflicts.iter().map(|conflict| {
             format!(
-                "sync conflict at {}, run `sai resolve <dir>` to keep the local version",
+                "sync conflict at {}, run `sai resolve <project>` to keep the local versions",
                 conflict.root
             )
         });

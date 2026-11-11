@@ -5,19 +5,19 @@ use dialoguer::Confirm;
 use russh::client;
 use russh::keys::{self, HashAlg, PublicKey, PublicKeyOrCertificate};
 
-use crate::vps::{HOST_ALIAS, SSH_PORT};
+use crate::vps::HOST_ALIAS;
 use crate::{mutagen, output};
-
-const PASSWORD_PORT: u16 = 22;
 
 pub struct HostKeyPolicy {
     host: String,
+    ports: [u16; 2],
 }
 
 impl HostKeyPolicy {
-    pub fn new(host: &str) -> Self {
+    pub fn new(host: &str, login_port: u16, sai_port: u16) -> Self {
         Self {
             host: host.to_owned(),
+            ports: [login_port, sai_port],
         }
     }
 }
@@ -29,20 +29,25 @@ impl client::Handler for HostKeyPolicy {
         let key = &key.public_key();
         let known_hosts = super::dir()?.join("known_hosts");
         if !known_hosts.exists() {
-            return trust_on_first_use(&self.host, key, &known_hosts);
+            return trust_on_first_use(&self.host, self.ports, key, &known_hosts);
         }
-        match keys::check_known_hosts_path(&self.host, PASSWORD_PORT, key, &known_hosts) {
+        match keys::check_known_hosts_path(&self.host, self.ports[0], key, &known_hosts) {
             Ok(true) => Ok(true),
-            Ok(false) => trust_on_first_use(&self.host, key, &known_hosts),
+            Ok(false) => trust_on_first_use(&self.host, self.ports, key, &known_hosts),
             Err(keys::Error::KeyChanged { .. }) => {
-                replace_changed_key(&self.host, key, &known_hosts)
+                replace_changed_key(&self.host, self.ports, key, &known_hosts)
             }
             Err(error) => Err(error.into()),
         }
     }
 }
 
-fn trust_on_first_use(host: &str, key: &PublicKey, known_hosts: &Path) -> Result<bool> {
+fn trust_on_first_use(
+    host: &str,
+    ports: [u16; 2],
+    key: &PublicKey,
+    known_hosts: &Path,
+) -> Result<bool> {
     output::info(&format!(
         "Host key fingerprint of {host}: {}",
         key.fingerprint(HashAlg::Sha256)
@@ -54,10 +59,15 @@ fn trust_on_first_use(host: &str, key: &PublicKey, known_hosts: &Path) -> Result
     if !trusted {
         bail!("host key of {host} was not trusted");
     }
-    learn(host, key, known_hosts)
+    learn(host, ports, key, known_hosts)
 }
 
-fn replace_changed_key(host: &str, key: &PublicKey, known_hosts: &Path) -> Result<bool> {
+fn replace_changed_key(
+    host: &str,
+    ports: [u16; 2],
+    key: &PublicKey,
+    known_hosts: &Path,
+) -> Result<bool> {
     output::info(&format!(
         "Host key of {host} has changed, new fingerprint: {}",
         key.fingerprint(HashAlg::Sha256)
@@ -69,12 +79,16 @@ fn replace_changed_key(host: &str, key: &PublicKey, known_hosts: &Path) -> Resul
     if !reinstalled {
         bail!("host key of {host} has changed, refusing to connect");
     }
-    forget_old_vps(host)?;
-    learn(host, key, known_hosts)
+    forget_old_vps(host, ports)?;
+    learn(host, ports, key, known_hosts)
 }
 
-fn forget_old_vps(host: &str) -> Result<()> {
-    for entry in [host.to_owned(), format!("[{host}]:{SSH_PORT}")] {
+fn forget_old_vps(host: &str, ports: [u16; 2]) -> Result<()> {
+    let entries = ports.map(|port| match port {
+        22 => host.to_owned(),
+        port => format!("[{host}]:{port}"),
+    });
+    for entry in entries {
         Command::new(super::program("ssh-keygen"))
             .args(["-R", &entry])
             .output()?;
@@ -85,8 +99,8 @@ fn forget_old_vps(host: &str) -> Result<()> {
     mutagen::terminate_all()
 }
 
-fn learn(host: &str, key: &PublicKey, known_hosts: &Path) -> Result<bool> {
-    for port in [PASSWORD_PORT, SSH_PORT] {
+fn learn(host: &str, ports: [u16; 2], key: &PublicKey, known_hosts: &Path) -> Result<bool> {
+    for port in ports {
         keys::known_hosts::learn_known_hosts_path(host, port, key, known_hosts)?;
     }
     Ok(true)

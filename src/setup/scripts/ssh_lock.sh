@@ -33,4 +33,4 @@ esac
 ufw delete allow 22/tcp >/dev/null
 passwd -l root >/dev/null
 mkdir -p "$(dirname "$SAI_SETUP_MARKER")"
-touch "$SAI_SETUP_MARKER"
+: > "$SAI_SETUP_MARKER"

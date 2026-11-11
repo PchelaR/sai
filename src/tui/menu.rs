@@ -34,7 +34,7 @@ impl General {
 
     pub fn description(self) -> &'static str {
         match self {
-            General::Attach => "Connect a new folder",
+            General::Attach => "Add a folder to a project",
             General::Update => "Rebuild images",
             General::Doctor => "Check everything",
             General::Logs => "Save a report with logs",
@@ -61,19 +61,25 @@ impl General {
 pub enum ProjectItem {
     Chat,
     Shell,
+    Attach,
+    Detach,
     Change,
     Snapshots,
+    Rename,
     Stop,
     Remove,
     Purge,
 }
 
 impl ProjectItem {
-    pub const ALL: [ProjectItem; 7] = [
+    pub const ALL: [ProjectItem; 10] = [
         ProjectItem::Chat,
         ProjectItem::Shell,
+        ProjectItem::Attach,
+        ProjectItem::Detach,
         ProjectItem::Change,
         ProjectItem::Snapshots,
+        ProjectItem::Rename,
         ProjectItem::Stop,
         ProjectItem::Remove,
         ProjectItem::Purge,
@@ -83,8 +89,11 @@ impl ProjectItem {
         match self {
             ProjectItem::Chat => "chat",
             ProjectItem::Shell => "shell",
+            ProjectItem::Attach => "attach",
+            ProjectItem::Detach => "detach",
             ProjectItem::Change => "change",
             ProjectItem::Snapshots => "snapshots",
+            ProjectItem::Rename => "rename",
             ProjectItem::Stop => "stop",
             ProjectItem::Remove => "rm",
             ProjectItem::Purge => "rm --purge",
@@ -95,11 +104,14 @@ impl ProjectItem {
         match self {
             ProjectItem::Chat => "Open the agent",
             ProjectItem::Shell => "Bash in the container",
+            ProjectItem::Attach => "Add a folder",
+            ProjectItem::Detach => "Remove a folder",
             ProjectItem::Change => "Switch to another agent",
             ProjectItem::Snapshots => "List and restore",
+            ProjectItem::Rename => "Give the project another name",
             ProjectItem::Stop => "Pause sync and container",
-            ProjectItem::Remove => "Keep files on the VPS",
-            ProjectItem::Purge => "Delete files on the VPS too",
+            ProjectItem::Remove => "Remove the project, keep VPS files",
+            ProjectItem::Purge => "Remove with files on the VPS",
         }
     }
 
@@ -107,8 +119,11 @@ impl ProjectItem {
         match self {
             ProjectItem::Chat => 'o',
             ProjectItem::Shell => 's',
+            ProjectItem::Attach => 'f',
+            ProjectItem::Detach => 't',
             ProjectItem::Change => 'c',
             ProjectItem::Snapshots => 'p',
+            ProjectItem::Rename => 'n',
             ProjectItem::Stop => 'x',
             ProjectItem::Remove => 'd',
             ProjectItem::Purge => 'D',

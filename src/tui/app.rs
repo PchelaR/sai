@@ -7,8 +7,8 @@ use super::actions::{Action, Progress, Session, Task};
 use super::loader::Loaded;
 use super::menu::{General, ProjectItem};
 use crate::agent::Agent;
-use crate::project::list::Row;
-use crate::snapshot;
+use crate::project::list::{FolderRow, Row};
+use crate::{project, snapshot};
 
 pub enum Outcome {
     Quit,
@@ -17,15 +17,17 @@ pub enum Outcome {
 }
 
 pub enum Input {
-    Attach,
-    RestorePath { path: String, snapshot: String },
+    Project,
+    Folder { project: String },
+    Rename { project: String },
+    RestorePath { project: String, snapshot: String },
     ResetConfirmation,
+    PurgeConfirmation { project: String },
 }
 
-#[derive(Clone, Copy)]
 pub enum AgentChoice {
-    Attach,
-    Change,
+    Attach { project: String, path: String },
+    Change { project: String },
 }
 
 #[derive(Default)]
@@ -40,19 +42,24 @@ pub enum Mode {
         value: String,
     },
     ChooseAgent {
-        path: String,
         selected: usize,
         purpose: AgentChoice,
     },
     Snapshots {
-        path: String,
+        project: String,
         stamps: Vec<String>,
+        selected: usize,
+    },
+    Folders {
+        project: String,
+        folders: Vec<FolderRow>,
         selected: usize,
     },
     Confirm {
         question: String,
         action: Action,
     },
+    Help,
     Running {
         title: String,
         log: Vec<String>,
@@ -64,6 +71,7 @@ pub enum Mode {
 pub struct App {
     pub loaded: Option<Loaded>,
     pub error: Option<String>,
+    pub input_error: Option<String>,
     pub loading: bool,
     pub selected: usize,
     pub mode: Mode,
@@ -117,16 +125,17 @@ impl App {
             Mode::Browse => self.browse(key),
             Mode::ProjectMenu { selected } => self.project_menu(selected, key),
             Mode::Input { purpose, value } => self.input(purpose, value, key),
-            Mode::ChooseAgent {
-                path,
-                selected,
-                purpose,
-            } => self.choose_agent(path, selected, purpose, key),
+            Mode::ChooseAgent { selected, purpose } => self.choose_agent(selected, purpose, key),
             Mode::Snapshots {
-                path,
+                project,
                 stamps,
                 selected,
-            } => self.snapshots(path, stamps, selected, key),
+            } => self.snapshots(project, stamps, selected, key),
+            Mode::Folders {
+                project,
+                folders,
+                selected,
+            } => self.folders(project, folders, selected, key),
             Mode::Confirm { question, action } => match key.code {
                 KeyCode::Char('y') => Some(Outcome::Run(action)),
                 KeyCode::Char('n') | KeyCode::Esc => None,
@@ -135,6 +144,7 @@ impl App {
                     None
                 }
             },
+            Mode::Help => None,
             Mode::Running { title, log, result } => {
                 let finished = result.is_some();
                 if finished && matches!(key.code, KeyCode::Enter | KeyCode::Esc) {
@@ -168,6 +178,10 @@ impl App {
                 }
             },
             KeyCode::Esc => Some(Outcome::Quit),
+            KeyCode::Char('?') => {
+                self.mode = Mode::Help;
+                None
+            }
             KeyCode::Char(character) => self.shortcut(character),
             _ => None,
         }
@@ -185,7 +199,10 @@ impl App {
 
     fn general(&mut self, item: General) -> Option<Outcome> {
         match item {
-            General::Attach => self.ask(Input::Attach, current_dir()),
+            General::Attach => {
+                let suggested = self.suggested_project();
+                self.ask(Input::Project, suggested)
+            }
             General::Update => run(Task::Update),
             General::Doctor => run(Task::Doctor),
             General::Logs => run(Task::Logs),
@@ -216,24 +233,45 @@ impl App {
 
     fn project_item(&mut self, item: ProjectItem) -> Option<Outcome> {
         let project = self.selected_project()?;
-        let (name, path) = (project.name.clone(), project.path.clone());
+        let name = project.name.clone();
         match item {
-            ProjectItem::Chat => open(Session::Chat(path)),
-            ProjectItem::Shell => open(Session::Shell(path)),
+            ProjectItem::Chat => open(Session::Chat(name)),
+            ProjectItem::Shell => open(Session::Shell(name)),
             ProjectItem::Stop => run(Task::Stop(name)),
+            ProjectItem::Attach => self.ask(Input::Folder { project: name }, current_dir()),
+            ProjectItem::Rename => {
+                let value = name.clone();
+                self.ask(Input::Rename { project: name }, value)
+            }
+            ProjectItem::Detach => {
+                let folders = project
+                    .folders
+                    .iter()
+                    .map(|folder| FolderRow {
+                        name: folder.name.clone(),
+                        path: folder.path.clone(),
+                        sync: folder.sync.clone(),
+                    })
+                    .collect();
+                self.mode = Mode::Folders {
+                    project: name,
+                    folders,
+                    selected: 0,
+                };
+                None
+            }
             ProjectItem::Change => {
                 self.mode = Mode::ChooseAgent {
-                    path,
                     selected: 0,
-                    purpose: AgentChoice::Change,
+                    purpose: AgentChoice::Change { project: name },
                 };
                 None
             }
             ProjectItem::Snapshots => {
-                match snapshot::stamps(&path) {
+                match snapshot::stamps(&name) {
                     Ok(stamps) => {
                         self.mode = Mode::Snapshots {
-                            path,
+                            project: name,
                             stamps,
                             selected: 0,
                         }
@@ -246,10 +284,9 @@ impl App {
                 format!("Remove {name}? Files and snapshots on the VPS stay"),
                 Action::Run(Task::Remove { name, purge: false }),
             ),
-            ProjectItem::Purge => self.confirm(
-                format!("Remove {name} with its files and snapshots on the VPS?"),
-                Action::Run(Task::Remove { name, purge: true }),
-            ),
+            ProjectItem::Purge => {
+                self.ask(Input::PurgeConfirmation { project: name }, String::new())
+            }
         }
     }
 
@@ -269,25 +306,59 @@ impl App {
 
     fn submit(&mut self, purpose: Input, value: String) -> Option<Outcome> {
         match purpose {
-            Input::Attach => {
+            Input::Project => {
+                if let Err(error) = project::validate_name(&value) {
+                    return self.ask_again(Input::Project, value, error);
+                }
+                self.ask(Input::Folder { project: value }, current_dir())
+            }
+            Input::Folder { project } => {
+                let path = expand_home(&value);
+                if let Err(error) = project::local_path(&path) {
+                    return self.ask_again(Input::Folder { project }, value, error);
+                }
+                if self.projects().iter().any(|row| row.name == project) {
+                    return self.attach(project, path, None);
+                }
                 self.mode = Mode::ChooseAgent {
-                    path: expand_home(&value),
                     selected: 0,
-                    purpose: AgentChoice::Attach,
+                    purpose: AgentChoice::Attach { project, path },
                 };
                 None
             }
-            Input::RestorePath { path, snapshot } => {
+            Input::Rename { project } => {
+                if let Err(error) = project::validate_name(&value) {
+                    return self.ask_again(Input::Rename { project }, value, error);
+                }
+                if value == project {
+                    return None;
+                }
+                run(Task::Rename {
+                    project,
+                    name: value,
+                })
+            }
+            Input::RestorePath { project, snapshot } => {
                 let target = (!value.is_empty()).then_some(value);
                 let what = target.as_deref().unwrap_or("the whole project").to_owned();
                 self.confirm(
                     format!("Restore {what} from {snapshot}? Current files are snapshotted first"),
                     Action::Run(Task::Restore {
-                        path,
+                        project,
                         snapshot,
                         target,
                     }),
                 )
+            }
+            Input::PurgeConfirmation { project } => {
+                if value == project {
+                    return run(Task::Remove {
+                        name: project,
+                        purge: true,
+                    });
+                }
+                self.error = Some("the name did not match, nothing was deleted".to_owned());
+                None
             }
             Input::ResetConfirmation => {
                 let ip = self.loaded.as_ref().map(|loaded| loaded.ip.as_str());
@@ -303,7 +374,6 @@ impl App {
 
     fn choose_agent(
         &mut self,
-        path: String,
         selected: usize,
         purpose: AgentChoice,
         key: KeyEvent,
@@ -312,27 +382,25 @@ impl App {
         let selected = match key.code {
             KeyCode::Enter => {
                 let agent = agents[selected];
-                return run(match purpose {
-                    AgentChoice::Attach => Task::Attach(path, agent),
-                    AgentChoice::Change => Task::Change(path, agent),
-                });
+                return match purpose {
+                    AgentChoice::Attach { project, path } => {
+                        self.attach(project, path, Some(agent))
+                    }
+                    AgentChoice::Change { project } => run(Task::Change(project, agent)),
+                };
             }
             KeyCode::Esc => return None,
             KeyCode::Down | KeyCode::Char('j') => (selected + 1).min(agents.len() - 1),
             KeyCode::Up | KeyCode::Char('k') => selected.saturating_sub(1),
             _ => selected,
         };
-        self.mode = Mode::ChooseAgent {
-            path,
-            selected,
-            purpose,
-        };
+        self.mode = Mode::ChooseAgent { selected, purpose };
         None
     }
 
     fn snapshots(
         &mut self,
-        path: String,
+        project: String,
         stamps: Vec<String>,
         selected: usize,
         key: KeyEvent,
@@ -341,7 +409,7 @@ impl App {
         let selected = match key.code {
             KeyCode::Enter => {
                 let snapshot = stamps.get(selected)?.clone();
-                return self.ask(Input::RestorePath { path, snapshot }, String::new());
+                return self.ask(Input::RestorePath { project, snapshot }, String::new());
             }
             KeyCode::Esc => return None,
             KeyCode::Down | KeyCode::Char('j') => (selected + 1).min(last),
@@ -349,15 +417,96 @@ impl App {
             _ => selected,
         };
         self.mode = Mode::Snapshots {
-            path,
+            project,
             stamps,
             selected,
         };
         None
     }
 
+    fn folders(
+        &mut self,
+        project: String,
+        folders: Vec<FolderRow>,
+        selected: usize,
+        key: KeyEvent,
+    ) -> Option<Outcome> {
+        let last = folders.len().saturating_sub(1);
+        let selected = match key.code {
+            KeyCode::Enter => {
+                let folder = folders.get(selected)?;
+                let question = format!(
+                    "Detach {} from {project}? Local files stay, the VPS copy is removed",
+                    folder.path
+                );
+                let path = folder.path.clone();
+                return self.confirm(question, Action::Run(Task::Detach { project, path }));
+            }
+            KeyCode::Esc => return None,
+            KeyCode::Down | KeyCode::Char('j') => (selected + 1).min(last),
+            KeyCode::Up | KeyCode::Char('k') => selected.saturating_sub(1),
+            _ => selected,
+        };
+        self.mode = Mode::Folders {
+            project,
+            folders,
+            selected,
+        };
+        None
+    }
+
+    fn attach(&mut self, project: String, path: String, agent: Option<Agent>) -> Option<Outcome> {
+        let local = std::path::PathBuf::from(&path);
+        let size = project::size::of(&local);
+        if !project::size::is_large(size) {
+            return run(Task::Attach {
+                project,
+                path,
+                agent,
+                large: false,
+            });
+        }
+        self.confirm(
+            crate::attach::large_question(&local, size),
+            Action::Run(Task::Attach {
+                project,
+                path,
+                agent,
+                large: true,
+            }),
+        )
+    }
+
+    fn suggested_project(&self) -> String {
+        let Ok(current) = project::current_dir() else {
+            return String::new();
+        };
+        self.projects()
+            .iter()
+            .find(|row| {
+                row.folders
+                    .iter()
+                    .any(|folder| project::same_path(std::path::Path::new(&folder.path), &current))
+            })
+            .map(|row| row.name.clone())
+            .or_else(|| project::folder_name(&current).ok())
+            .unwrap_or_default()
+    }
+
     fn ask(&mut self, purpose: Input, value: String) -> Option<Outcome> {
+        self.input_error = None;
         self.mode = Mode::Input { purpose, value };
+        None
+    }
+
+    fn ask_again(
+        &mut self,
+        purpose: Input,
+        value: String,
+        error: anyhow::Error,
+    ) -> Option<Outcome> {
+        self.mode = Mode::Input { purpose, value };
+        self.input_error = Some(format!("{error:#}"));
         None
     }
 

@@ -7,7 +7,7 @@ use anyhow::{Context, Result, ensure};
 
 use session::Session;
 
-use crate::project::Project;
+use crate::project::SyncTarget;
 use crate::vps::HOST_ALIAS;
 use crate::{files, ignores, logs, output};
 use crate::{secrets, ssh};
@@ -46,32 +46,39 @@ fn parse_sessions(output: &str) -> Result<Vec<Session>> {
     Ok(sessions.unwrap_or_default())
 }
 
-pub fn sync(project: &Project) -> Result<()> {
-    let id = project.id();
-    let ignores = ignores(project)?;
-    let Some(session) = session(&id)? else {
-        output::step("Uploading project");
-        mirror(project, &ignores)?;
-        output::step("Starting sync");
-        return create(project, TWO_WAY, &ignores);
+pub fn sync(target: &SyncTarget) -> Result<()> {
+    let ignores = ignores(target)?;
+    let Some(session) = session(&target.id)? else {
+        output::step(&format!("Uploading {}", target.local.display()));
+        mirror(target, &ignores)?;
+        return create(target, TWO_WAY, &ignores);
     };
     if session.paused {
-        run(&["sync", "resume", &id])?;
+        run(&["sync", "resume", &target.id])?;
     }
     if session.ignore.paths != ignores {
-        output::step("Applying new ignore rules");
-        resync(project, &ignores)?;
+        output::step(&format!(
+            "Applying new ignore rules to {}",
+            target.local.display()
+        ));
+        resync(target, &ignores)?;
     }
     Ok(())
 }
 
-pub fn keep_local(project: &Project) -> Result<()> {
+pub fn keep_local(target: &SyncTarget) -> Result<()> {
     ensure!(
-        session(&project.id())?.is_some(),
-        "{} is not attached, run `sai chat <dir>` first",
-        project.name
+        session(&target.id)?.is_some(),
+        "{} is not syncing, run `sai chat` first",
+        target.local.display()
     );
-    resync(project, &ignores(project)?)
+    resync(target, &ignores(target)?)
+}
+
+pub fn flush(id: &str) -> Result<()> {
+    run(&["sync", "flush", id])
+        .map(|_| ())
+        .context("failed to finish the current sync, check the connection and try again")
 }
 
 pub fn report_issues(id: &str) -> Result<()> {
@@ -91,37 +98,35 @@ pub fn terminate(id: &str) -> Result<()> {
     run(&["sync", "terminate", id]).map(|_| ())
 }
 
-fn resync(project: &Project, ignores: &[String]) -> Result<()> {
-    let id = project.id();
-    run(&["sync", "flush", &id]).context("failed to finish the current sync, try again later")?;
-    terminate(&id)?;
-    mirror(project, ignores)?;
-    create(project, TWO_WAY, ignores)
+fn resync(target: &SyncTarget, ignores: &[String]) -> Result<()> {
+    flush(&target.id)?;
+    terminate(&target.id)?;
+    mirror(target, ignores)?;
+    create(target, TWO_WAY, ignores)
 }
 
-fn mirror(project: &Project, ignores: &[String]) -> Result<()> {
-    let id = project.id();
-    create(project, MIRROR, ignores)?;
-    run(&["sync", "flush", &id])?;
-    terminate(&id)
+fn mirror(target: &SyncTarget, ignores: &[String]) -> Result<()> {
+    create(target, MIRROR, ignores)?;
+    flush(&target.id)?;
+    terminate(&target.id)
 }
 
-fn create(project: &Project, mode: &str, ignores: &[String]) -> Result<()> {
+fn create(target: &SyncTarget, mode: &str, ignores: &[String]) -> Result<()> {
     let mut args = vec![
         "sync".to_owned(),
         "create".to_owned(),
-        format!("--name={}", project.id()),
+        format!("--name={}", target.id),
         format!("--sync-mode={mode}"),
         "--ignore-vcs".to_owned(),
     ];
     args.extend(ignores.iter().map(|pattern| format!("--ignore={pattern}")));
-    args.push(project.local_path.display().to_string());
-    args.push(format!("{HOST_ALIAS}:{}", project.remote_path()));
+    args.push(target.local.display().to_string());
+    args.push(format!("{HOST_ALIAS}:{}", target.remote));
     run(&args).map(|_| ())
 }
 
-fn ignores(project: &Project) -> Result<Vec<String>> {
-    let path = project.local_path.join(IGNORE_FILE);
+fn ignores(target: &SyncTarget) -> Result<Vec<String>> {
+    let path = target.local.join(IGNORE_FILE);
     let custom = files::read_or_empty(&path)?;
     Ok(ignores::BUILD
         .iter()

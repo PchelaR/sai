@@ -10,9 +10,10 @@ use ratatui::widgets::{
 use super::app::{AgentChoice, App, Input, Mode};
 use super::menu::{General, ProjectItem};
 use crate::agent::Agent;
+use crate::project::list::FolderRow;
 
 const COMMAND_WIDTH: usize = 12;
-const DESCRIPTION_WIDTH: usize = 30;
+const DESCRIPTION_WIDTH: usize = 36;
 const HIGHLIGHT: &str = "› ";
 
 pub fn render(frame: &mut Frame, app: &App) {
@@ -33,13 +34,17 @@ pub fn render(frame: &mut Frame, app: &App) {
         Mode::Browse => {}
         Mode::ProjectMenu { selected } => render_project_menu(frame, app, *selected),
         Mode::Input { purpose, value } => render_input(frame, app, purpose, value),
-        Mode::ChooseAgent {
-            selected, purpose, ..
-        } => render_agents(frame, *selected, *purpose),
+        Mode::ChooseAgent { selected, purpose } => render_agents(frame, *selected, purpose),
         Mode::Snapshots {
             stamps, selected, ..
         } => render_snapshots(frame, stamps, *selected),
+        Mode::Folders {
+            project,
+            folders,
+            selected,
+        } => render_folders(frame, project, folders, *selected),
         Mode::Confirm { question, .. } => render_confirm(frame, question),
+        Mode::Help => render_help(frame),
         Mode::Running { title, log, result } => render_running(frame, title, log, result.as_ref()),
     }
 }
@@ -51,6 +56,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         " sai "
     };
     let line = match (&app.error, &app.loaded) {
+        (Some(_), None) => Line::from("Cannot load the projects, see below").fg(Color::Red),
         (Some(error), _) => Line::from(error.as_str()).fg(Color::Red),
         (None, Some(loaded)) => Line::from(format!(
             "{}   cpu {} core(s), load {}   memory {}   disk {}",
@@ -66,9 +72,29 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
 
 fn render_projects(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::bordered().title(" projects ");
+    if let (Some(error), None) = (&app.error, &app.loaded) {
+        let mut lines: Vec<Line> = error
+            .lines()
+            .map(|line| Line::from(line.to_owned()).fg(Color::Red))
+            .collect();
+        lines.push(Line::default());
+        lines.push(Line::from(
+            "Is the VPS on and set up? Set it up once with `sai setup` in a terminal.",
+        ));
+        lines.push(Line::from(
+            "Choose doctor below to see what exactly is wrong, then refresh.",
+        ));
+        frame.render_widget(
+            Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .block(block),
+            area,
+        );
+        return;
+    }
     if app.projects().is_empty() {
         let hint = if app.loaded.is_some() {
-            "No projects yet. Choose attach below to connect a folder"
+            "No projects yet. Choose attach below and pick a folder with your code, or press ? for help"
         } else {
             ""
         };
@@ -87,7 +113,7 @@ fn render_projects(frame: &mut Frame, app: &App, area: Rect) {
             Cell::from(project.sync.as_str()),
             Cell::from(running.map_or("", |usage| usage.cpu.as_str())),
             Cell::from(running.map_or("", |usage| usage.memory.as_str())),
-            Cell::from(project.path.as_str()),
+            Cell::from(folders(project)),
         ])
     });
     let table = Table::new(
@@ -103,7 +129,7 @@ fn render_projects(frame: &mut Frame, app: &App, area: Rect) {
         ],
     )
     .header(
-        Row::new(["NAME", "AGENT", "STATE", "SYNC", "CPU", "MEMORY", "PATH"])
+        Row::new(["NAME", "AGENT", "STATE", "SYNC", "CPU", "MEMORY", "FOLDERS"])
             .style(Style::new().bold()),
     )
     .row_highlight_style(Style::new().reversed())
@@ -128,15 +154,15 @@ fn render_project_menu(frame: &mut Frame, app: &App, selected: usize) {
     let items = ProjectItem::ALL
         .iter()
         .map(|item| menu_item(item.command(), item.description(), item.key()));
-    let area = popup(frame.area(), 52, ProjectItem::ALL.len() as u16 + 2);
+    let area = popup(frame.area(), 58, ProjectItem::ALL.len() as u16 + 2);
     frame.render_widget(Clear, area);
     render_list(frame, area, &format!(" {name} "), items, Some(selected));
 }
 
-fn render_agents(frame: &mut Frame, selected: usize, purpose: AgentChoice) {
+fn render_agents(frame: &mut Frame, selected: usize, purpose: &AgentChoice) {
     let title = match purpose {
-        AgentChoice::Attach => " agent for the folder ",
-        AgentChoice::Change => " switch agent ",
+        AgentChoice::Attach { .. } => " agent for the new project ",
+        AgentChoice::Change { .. } => " switch agent ",
     };
     let agents = Agent::value_variants();
     let items = agents.iter().map(|agent| ListItem::new(agent.name()));
@@ -160,19 +186,97 @@ fn render_snapshots(frame: &mut Frame, stamps: &[String], selected: usize) {
     render_list(frame, area, " snapshots ", items, Some(selected));
 }
 
+fn render_folders(frame: &mut Frame, project: &str, folders: &[FolderRow], selected: usize) {
+    let height = (folders.len().max(1) as u16 + 2).min(20);
+    let area = popup(frame.area(), 80, height);
+    frame.render_widget(Clear, area);
+    let title = format!(" detach a folder from {project} ");
+    if folders.is_empty() {
+        frame.render_widget(
+            Paragraph::new("No folders attached").block(Block::bordered().title(title)),
+            area,
+        );
+        return;
+    }
+    let items = folders.iter().map(|folder| {
+        ListItem::new(Line::from(vec![
+            Span::from(format!("{:<16}", folder.name)).bold(),
+            Span::from(folder.path.clone()).dark_gray(),
+        ]))
+    });
+    render_list(frame, area, &title, items, Some(selected));
+}
+
+fn folders(project: &crate::project::list::Row) -> String {
+    project
+        .folders
+        .iter()
+        .map(|folder| folder.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn render_input(frame: &mut Frame, app: &App, purpose: &Input, value: &str) {
     let title = match purpose {
-        Input::Attach => " folder to attach ".to_owned(),
-        Input::RestorePath { .. } => " path to restore, empty for the whole project ".to_owned(),
+        Input::Project => " project name, new or existing ".to_owned(),
+        Input::Folder { project } => format!(" folder to attach to {project} "),
+        Input::Rename { project } => format!(" new name for {project} "),
+        Input::RestorePath { .. } => {
+            " path like front/src/app.ts, empty for the whole project ".to_owned()
+        }
+        Input::PurgeConfirmation { project } => {
+            format!(" type {project} to delete it with its files and snapshots on the VPS ")
+        }
         Input::ResetConfirmation => {
             let ip = app.loaded.as_ref().map_or("", |loaded| loaded.ip.as_str());
             format!(" type {ip} to delete everything on the VPS ")
         }
     };
-    let area = popup(frame.area(), 70, 3);
+    let mut lines = vec![Line::from(format!("{value}_"))];
+    if let Some(error) = &app.input_error {
+        lines.push(Line::from(error.as_str()).fg(Color::Red));
+    }
+    let area = popup(frame.area(), 90, lines.len() as u16 + 2);
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(format!("{value}_")).block(Block::bordered().title(title)),
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(Block::bordered().title(title)),
+        area,
+    );
+}
+
+fn render_help(frame: &mut Frame) {
+    let key = |key: &str, text: &str| {
+        Line::from(vec![
+            Span::from(format!("  {key:<14}")).fg(Color::Cyan),
+            Span::from(text.to_owned()),
+        ])
+    };
+    let lines = vec![
+        Line::from("In sai").bold(),
+        key("↑ ↓", "choose a project or a menu item"),
+        key("Enter", "open the project menu or run the menu item"),
+        key("letters", "shortcuts shown in [brackets]"),
+        key("Esc", "go back, or quit on the main screen"),
+        Line::default(),
+        Line::from("In the agent").bold(),
+        key("mouse wheel", "scroll back through the conversation"),
+        key("drag", "select text, it is copied when you let go"),
+        key("Ctrl+B, D", "back to sai, the agent keeps working"),
+        key("/exit", "stop the agent"),
+        Line::from("  If copying does not work in your terminal, hold Shift (Windows, Linux)")
+            .dark_gray(),
+        Line::from("  or Option (Mac) while selecting.").dark_gray(),
+        Line::default(),
+        Line::from("Your files").bold(),
+        Line::from("  sai never deletes your local folders. The VPS copy of every project is"),
+        Line::from("  saved every 15 minutes, restore it with snapshots in the project menu."),
+    ];
+    let area = popup(frame.area(), 80, lines.len() as u16 + 2);
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::bordered().title(" help ")),
         area,
     );
 }
@@ -268,8 +372,9 @@ fn menu_item(command: &str, description: &str, key: char) -> ListItem<'static> {
 
 fn footer_keys(mode: &Mode) -> &'static str {
     match mode {
-        Mode::Browse => "[↑] [↓] move   [Enter] select   [Esc] quit",
-        Mode::ProjectMenu { .. } | Mode::Snapshots { .. } => {
+        Mode::Browse => "[↑] [↓] move   [Enter] select   [?] help   [Esc] quit",
+        Mode::Help => "any key: back",
+        Mode::ProjectMenu { .. } | Mode::Snapshots { .. } | Mode::Folders { .. } => {
             "[↑] [↓] move   [Enter] select   [Esc] back"
         }
         Mode::Input { .. } => "[Enter] next   [Esc] cancel",
