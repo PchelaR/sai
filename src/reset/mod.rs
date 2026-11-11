@@ -13,10 +13,10 @@ pub fn run(all: bool) -> Result<()> {
     } else {
         "agent images (the base image is kept)"
     };
-    println!(
+    output::info(&format!(
         "This deletes everything sai created on {}: agent containers, agent logins, project files, snapshots and {images}.",
         config.ip
-    );
+    ));
     let confirmation: String = Input::new()
         .with_prompt(format!("Type {} to confirm", config.ip))
         .interact_text()?;
@@ -24,15 +24,16 @@ pub fn run(all: bool) -> Result<()> {
         confirmation.trim() == config.ip,
         "confirmation did not match, nothing was deleted"
     );
+    execute(all)
+}
 
+pub fn execute(all: bool) -> Result<()> {
     output::step("Stopping sync");
     mutagen::terminate_all()?;
     output::step("Deleting everything on the VPS");
     remote::run(RESET, &[if all { "all" } else { "keep-base" }])?;
-
-    println!(
-        "{} is reset. Your local folders are untouched, `sai chat` uploads them again",
-        config.ip
+    output::info(
+        "The VPS is reset. Your local folders are untouched, `sai chat` uploads them again",
     );
     Ok(())
 }

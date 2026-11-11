@@ -8,6 +8,9 @@ pub fn run(dir_path: &str) -> Result<()> {
     output::step("Replacing VPS files with local versions");
     mutagen::keep_local(&project)?;
     mutagen::report_issues(&project.id())?;
-    println!("Conflicts in {} resolved with local versions", project.name);
+    output::info(&format!(
+        "Conflicts in {} resolved with local versions",
+        project.name
+    ));
     Ok(())
 }

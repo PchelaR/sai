@@ -1,0 +1,34 @@
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(rm *)"
+reason = "Deleting files is not allowed"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(rmdir *)"
+reason = "Deleting files is not allowed"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(unlink *)"
+reason = "Deleting files is not allowed"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(shred *)"
+reason = "Deleting files is not allowed"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(git clean*)"
+reason = "Deleting files is not allowed"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(git commit*)"
+reason = "Commits are made by the user"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(git push*)"
+reason = "Pushes are made by the user"

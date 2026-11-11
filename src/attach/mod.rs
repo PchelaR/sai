@@ -4,7 +4,7 @@ use crate::agent::Agent;
 use crate::config::{self, Config};
 use crate::project::Project;
 use crate::vps::SETUP_MARKER;
-use crate::{fingerprint, image, mutagen, remote, secrets, snapshot, ssh, tools};
+use crate::{fingerprint, image, mutagen, output, remote, secrets, snapshot, ssh, tools};
 
 const PREPARE_PROJECT: &str = include_str!("scripts/prepare_project.sh");
 const REMOVE_SECRETS: &str = include_str!("scripts/remove_secrets.sh");
@@ -18,10 +18,10 @@ pub struct Attached {
 
 pub fn run(dir_path: &str, agent: Option<Agent>) -> Result<()> {
     let attached = ensure(dir_path, agent)?;
-    println!(
+    output::info(&format!(
         "{} is attached to {}. Talk to it with: sai chat {dir_path}",
         attached.project.name, attached.agent
-    );
+    ));
     Ok(())
 }
 

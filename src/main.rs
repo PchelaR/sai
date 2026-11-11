@@ -22,6 +22,7 @@ mod snapshot;
 mod ssh;
 mod status;
 mod tools;
+mod tui;
 mod update;
 mod vps;
 
@@ -93,14 +94,18 @@ enum Command {
 #[command(version, about)]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    match cli.command {
+    let Some(command) = cli.command else {
+        return tui::run();
+    };
+
+    match command {
         Command::Setup => setup::run().await,
         Command::Attach { dir_path, agent } => attach::run(&dir_path, agent),
         Command::Chat { dir_path, agent } => chat::run(&dir_path, agent),
@@ -112,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
             snapshot,
             path,
             dir,
-        } => snapshot::restore(&dir, &snapshot, path.as_deref()),
+        } => snapshot::restore_with_confirmation(&dir, &snapshot, path.as_deref()),
         Command::List => project::list::run(),
         Command::Status => status::run(),
         Command::Doctor => doctor::run(),

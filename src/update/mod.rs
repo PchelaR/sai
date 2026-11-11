@@ -17,8 +17,8 @@ pub fn run() -> Result<()> {
         UPDATE_IMAGES,
         &args.iter().map(String::as_str).collect::<Vec<_>>(),
     )?;
-    println!(
-        "Images updated. Projects switch to them on the next `sai chat`, running agent sessions keep the old ones until they end"
+    output::info(
+        "Images updated. Projects switch to them on the next `sai chat`, running agent sessions keep the old ones until they end",
     );
     Ok(())
 }

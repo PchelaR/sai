@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::{mutagen, remote};
+use crate::{mutagen, output, remote};
 
 const STOP: &str = include_str!("scripts/stop.sh");
 
@@ -11,6 +11,6 @@ pub fn run(name: &str) -> Result<()> {
     if mutagen::session(&id)?.is_some_and(|session| !session.paused) {
         mutagen::pause(&id)?;
     }
-    println!("Stopped {name}. Resume with: sai chat <dir>");
+    output::info(&format!("Stopped {name}. Resume with: sai chat <dir>"));
     Ok(())
 }

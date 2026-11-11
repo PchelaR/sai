@@ -48,15 +48,56 @@ const PLATFORMS: &[(&str, &str, &str, &str)] = &[
 
 pub fn binary() -> Result<PathBuf> {
     let dir = sai_data_dir()?.join(format!("mutagen-{VERSION}"));
-    let binary = dir.join(if cfg!(windows) {
-        "mutagen.exe"
-    } else {
-        "mutagen"
-    });
+    let binary = dir.join(executable());
     if !binary.exists() {
         install(&dir)?;
     }
+    remove_old_versions()?;
     Ok(binary)
+}
+
+fn remove_old_versions() -> Result<()> {
+    let data_dir = sai_data_dir()?;
+    let Ok(entries) = fs::read_dir(&data_dir) else {
+        return Ok(());
+    };
+    let current = format!("mutagen-{VERSION}");
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with(&current) || !is_version_dir(&name) {
+            continue;
+        }
+        let path = entry.path();
+        stop_daemon(&path.join(executable()))?;
+        if let Err(error) = fs::remove_dir_all(&path) {
+            output::warning(&format!("failed to remove {}: {error}", path.display()));
+        }
+    }
+    Ok(())
+}
+
+fn is_version_dir(name: &str) -> bool {
+    name.strip_prefix("mutagen-")
+        .and_then(|rest| rest.chars().next())
+        .is_some_and(|first| first.is_ascii_digit())
+}
+
+fn stop_daemon(binary: &Path) -> Result<()> {
+    if binary.exists() {
+        let _ = Command::new(binary)
+            .args(["daemon", "stop"])
+            .env("MUTAGEN_DATA_DIRECTORY", data_directory()?)
+            .output();
+    }
+    Ok(())
+}
+
+fn executable() -> &'static str {
+    if cfg!(windows) {
+        "mutagen.exe"
+    } else {
+        "mutagen"
+    }
 }
 
 pub fn data_directory() -> Result<PathBuf> {
@@ -126,7 +167,16 @@ fn verify(archive: &Path, expected: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PLATFORMS, platform};
+    use super::{PLATFORMS, is_version_dir, platform};
+
+    #[test]
+    fn matches_only_version_dirs() {
+        assert!(is_version_dir("mutagen-0.18.0"));
+        assert!(is_version_dir("mutagen-0.17.6.partial"));
+        assert!(!is_version_dir("mutagen-data"));
+        assert!(!is_version_dir("mutagen"));
+        assert!(!is_version_dir("snapshots"));
+    }
 
     #[test]
     fn supports_the_current_platform() {

@@ -34,12 +34,17 @@ mod tests {
     fn agent_images_are_named_after_agents() {
         assert!(agent(Agent::Claude).starts_with("sai-claude:"));
         assert!(agent(Agent::Codex).starts_with("sai-codex:"));
+        assert!(agent(Agent::Kimi).starts_with("sai-kimi:"));
         assert!(base().starts_with("sai-base:"));
     }
 
     #[test]
     fn agent_images_differ() {
-        let references: Vec<String> = Agent::value_variants().iter().map(|a| agent(*a)).collect();
-        assert_ne!(references[0], references[1]);
+        let mut references: Vec<String> =
+            Agent::value_variants().iter().map(|a| agent(*a)).collect();
+        let count = references.len();
+        references.sort();
+        references.dedup();
+        assert_eq!(references.len(), count);
     }
 }

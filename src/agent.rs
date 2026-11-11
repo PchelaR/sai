@@ -7,6 +7,7 @@ pub enum Agent {
     #[default]
     Claude,
     Codex,
+    Kimi,
 }
 
 impl Agent {
@@ -21,6 +22,7 @@ impl Agent {
         match self {
             Agent::Claude => "claude",
             Agent::Codex => "codex",
+            Agent::Kimi => "kimi",
         }
     }
 
@@ -28,6 +30,7 @@ impl Agent {
         match self {
             Agent::Claude => "claude --permission-mode acceptEdits",
             Agent::Codex => "codex --sandbox danger-full-access --ask-for-approval on-request",
+            Agent::Kimi => "sai-kimi",
         }
     }
 
@@ -35,6 +38,7 @@ impl Agent {
         match self {
             Agent::Claude => include_str!("agent/claude.Dockerfile"),
             Agent::Codex => include_str!("agent/codex.Dockerfile"),
+            Agent::Kimi => include_str!("agent/kimi.Dockerfile"),
         }
     }
 }

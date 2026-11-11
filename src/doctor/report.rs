@@ -2,6 +2,8 @@ use std::fmt::Display;
 
 use anyhow::{Result, bail};
 
+use crate::output;
+
 #[derive(Default)]
 pub struct Report {
     failures: usize,
@@ -9,7 +11,8 @@ pub struct Report {
 
 impl Report {
     pub fn section(&self, title: &str) {
-        println!("\n{title}");
+        output::info("");
+        output::info(title);
     }
 
     pub fn check<T>(&mut self, name: &str, result: Result<T>) -> Option<T> {
@@ -26,23 +29,23 @@ impl Report {
     }
 
     pub fn ok(&self, name: &str) {
-        println!("  ok    {name}");
+        output::info(&format!("  ok    {name}"));
     }
 
     pub fn warn(&self, name: &str, detail: impl Display) {
-        println!("  warn  {name}: {detail}");
+        output::info(&format!("  warn  {name}: {detail}"));
     }
 
     pub fn fail(&mut self, name: &str, detail: impl Display) {
         self.failures += 1;
-        println!("  FAIL  {name}: {detail}");
+        output::info(&format!("  FAIL  {name}: {detail}"));
     }
 
     pub fn finish(self) -> Result<()> {
-        println!();
+        output::info("");
         match self.failures {
             0 => {
-                println!("Everything looks good");
+                output::info("Everything looks good");
                 Ok(())
             }
             count => bail!("found {count} problem(s)"),

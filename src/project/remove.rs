@@ -1,6 +1,6 @@
 use anyhow::{Result, ensure};
 
-use crate::{mutagen, remote, snapshot};
+use crate::{mutagen, output, remote, snapshot};
 
 const REMOVE: &str = include_str!("scripts/remove.sh");
 
@@ -16,11 +16,13 @@ pub fn run(name: &str, purge: bool) -> Result<()> {
     ensure!(synced || found.trim() == "found", "no project named {name}");
     if purge {
         snapshot::purge(name)?;
-        println!("Removed {name}, its files and snapshots on the VPS");
+        output::info(&format!(
+            "Removed {name}, its files and snapshots on the VPS"
+        ));
     } else {
-        println!(
+        output::info(&format!(
             "Removed {name}. Its files and snapshots stay on the VPS, use --purge to delete them"
-        );
+        ));
     }
     Ok(())
 }
