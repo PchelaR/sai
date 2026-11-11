@@ -41,3 +41,15 @@ pub const PREPARE: &[Step] = &[
 pub const LOCK_DOWN: &[Step] = &[step!("Locking down ssh", "ssh_lock.sh")];
 
 pub const ROLLBACK: &[Step] = &[step!("Rolling back ssh changes", "ssh_rollback.sh")];
+
+#[cfg(test)]
+mod tests {
+    use super::{LOCK_DOWN, PREPARE, ROLLBACK};
+
+    #[test]
+    fn scripts_use_unix_line_endings() {
+        for step in PREPARE.iter().chain(LOCK_DOWN).chain(ROLLBACK) {
+            assert!(!step.script.contains('\r'), "{} has CRLF", step.title);
+        }
+    }
+}
