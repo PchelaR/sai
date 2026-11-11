@@ -17,6 +17,7 @@ pub struct Project {
 impl Project {
     pub fn open(dir_path: &str) -> Result<Self> {
         let local_path = fs::canonicalize(dir_path)
+            .map(without_verbatim_prefix)
             .with_context(|| format!("directory not found: {dir_path}"))?;
         ensure!(
             local_path.is_dir(),
@@ -42,6 +43,20 @@ impl Project {
     pub fn remote_path(&self) -> String {
         remote_path(&self.name)
     }
+}
+
+fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let stripped = {
+        let text = path.to_string_lossy();
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            Some(PathBuf::from(format!(r"\\{rest}")))
+        } else {
+            text.strip_prefix(r"\\?\")
+                .filter(|rest| rest.as_bytes().get(1) == Some(&b':'))
+                .map(PathBuf::from)
+        }
+    };
+    stripped.unwrap_or(path)
 }
 
 pub fn id(name: &str) -> String {
@@ -70,7 +85,20 @@ fn slug(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{id, remote_path, slug, validate_name};
+    use std::path::PathBuf;
+
+    use super::{id, remote_path, slug, validate_name, without_verbatim_prefix};
+
+    #[test]
+    fn strips_windows_verbatim_prefix() {
+        let strip = |path: &str| without_verbatim_prefix(PathBuf::from(path));
+        assert_eq!(strip(r"\\?\W:\Dev\app"), PathBuf::from(r"W:\Dev\app"));
+        assert_eq!(
+            strip(r"\\?\UNC\server\share\app"),
+            PathBuf::from(r"\\server\share\app")
+        );
+        assert_eq!(strip("/home/user/app"), PathBuf::from("/home/user/app"));
+    }
 
     #[test]
     fn slugs_folder_names() {
