@@ -3,6 +3,7 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 
 use anyhow::{Context, Result, bail, ensure};
+use base64::{Engine, prelude::BASE64_STANDARD};
 
 use crate::output;
 use crate::quote;
@@ -43,7 +44,10 @@ pub fn interactive(command: &str) -> Result<()> {
     let status = Command::new("ssh")
         .args(["-t", "-q"])
         .arg(HOST_ALIAS)
-        .arg(command)
+        .arg(format!(
+            "bash <(echo {} | base64 -d)",
+            BASE64_STANDARD.encode(command)
+        ))
         .status()
         .context(SSH_MISSING)?;
     ensure!(status.success(), "remote session ended with {status}");
@@ -51,23 +55,27 @@ pub fn interactive(command: &str) -> Result<()> {
 }
 
 fn spawn(script: &str, args: &[&str]) -> Result<Child> {
-    let command: String = args
-        .iter()
-        .map(|arg| format!(" {}", quote::shell(arg)))
-        .collect();
     let mut child = Command::new("ssh")
         .arg("-T")
         .arg(HOST_ALIAS)
-        .arg(format!("bash -s --{command}"))
+        .arg("bash -s")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .context(SSH_MISSING)?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(format!("{PRELUDE}{script}").as_bytes())?;
+        stdin.write_all(stdin_script(script, args).as_bytes())?;
     }
     Ok(child)
+}
+
+fn stdin_script(script: &str, args: &[&str]) -> String {
+    let positional: String = args
+        .iter()
+        .map(|arg| format!(" {}", quote::shell(arg)))
+        .collect();
+    format!("set --{positional}\n{PRELUDE}{script}")
 }
 
 fn check(status: ExitStatus, stderr: &str) -> Result<()> {
@@ -78,5 +86,18 @@ fn check(status: ExitStatus, stderr: &str) -> Result<()> {
             bail!("could not connect to the VPS, run `sai setup` first\n{stderr}")
         }
         _ => bail!("{stderr}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stdin_script;
+
+    #[test]
+    fn passes_arguments_through_stdin() {
+        assert_eq!(
+            stdin_script("echo \"$1\"\n", &["W:\\Dev\\it's"]),
+            "set -- 'W:\\Dev\\it'\\''s'\nset -euo pipefail\necho \"$1\"\n"
+        );
     }
 }
