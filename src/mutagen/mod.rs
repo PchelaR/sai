@@ -1,7 +1,11 @@
 mod install;
 mod session;
 
-use std::{ffi::OsStr, process::Command};
+use std::ffi::OsStr;
+use std::io::Read;
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
 
@@ -16,6 +20,8 @@ const IGNORE_FILE: &str = ".saiignore";
 const LIST_TEMPLATE: &str = "{{ json . }}";
 const MIRROR: &str = "one-way-replica";
 const TWO_WAY: &str = "two-way-safe";
+const PROGRESS_INTERVAL: Duration = Duration::from_secs(2);
+const REPEAT_AFTER: Duration = Duration::from_secs(20);
 
 pub fn ensure_installed() -> Result<()> {
     install::binary().map(|_| ())
@@ -53,6 +59,15 @@ pub fn sync(target: &SyncTarget) -> Result<()> {
         mirror(target, &ignores)?;
         return create(target, TWO_WAY, &ignores);
     };
+    if session.mode == MIRROR {
+        output::step(&format!(
+            "Finishing the interrupted upload of {}",
+            target.local.display()
+        ));
+        terminate(&target.id)?;
+        mirror(target, &ignores)?;
+        return create(target, TWO_WAY, &ignores);
+    }
     if session.paused {
         run(&["sync", "resume", &target.id])?;
     }
@@ -106,9 +121,60 @@ fn resync(target: &SyncTarget, ignores: &[String]) -> Result<()> {
 }
 
 fn mirror(target: &SyncTarget, ignores: &[String]) -> Result<()> {
+    output::info(&format!(
+        "  about {} to upload, on a slow connection this takes a while",
+        crate::project::size::human(crate::project::size::of(&target.local))
+    ));
     create(target, MIRROR, ignores)?;
-    flush(&target.id)?;
+    wait_with_progress(&target.id)?;
     terminate(&target.id)
+}
+
+fn wait_with_progress(id: &str) -> Result<()> {
+    let mut child = command()?
+        .args(["sync", "flush", id])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("failed to run mutagen")?;
+    let started = Instant::now();
+    let mut shown = String::new();
+    let mut shown_at = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait()? {
+            let mut stderr = String::new();
+            if let Some(mut pipe) = child.stderr.take() {
+                pipe.read_to_string(&mut stderr).ok();
+            }
+            if !status.success() {
+                logs::line(&format!("mutagen flush {id} failed: {}", stderr.trim()));
+            }
+            ensure!(
+                status.success(),
+                "the upload did not finish: {}",
+                stderr.trim()
+            );
+            return Ok(());
+        }
+        thread::sleep(PROGRESS_INTERVAL);
+        let Some(progress) = session(id)?.map(|session| session.progress()) else {
+            continue;
+        };
+        if progress != shown || shown_at.elapsed() >= REPEAT_AFTER {
+            output::info(&format!("  {progress} ({}s)", started.elapsed().as_secs()));
+            shown = progress;
+            shown_at = Instant::now();
+        }
+    }
+}
+
+fn command() -> Result<Command> {
+    let mut command = Command::new(install::binary()?);
+    command.env("MUTAGEN_DATA_DIRECTORY", install::data_directory()?);
+    if let Some(dir) = ssh::windows_openssh() {
+        command.env("MUTAGEN_SSH_PATH", dir);
+    }
+    Ok(command)
 }
 
 fn create(target: &SyncTarget, mode: &str, ignores: &[String]) -> Result<()> {
@@ -143,12 +209,7 @@ fn ignores(target: &SyncTarget) -> Result<Vec<String>> {
 }
 
 fn run<S: AsRef<OsStr>>(args: &[S]) -> Result<String> {
-    let mut command = Command::new(install::binary()?);
-    command.env("MUTAGEN_DATA_DIRECTORY", install::data_directory()?);
-    if let Some(dir) = ssh::windows_openssh() {
-        command.env("MUTAGEN_SSH_PATH", dir);
-    }
-    let output = command
+    let output = command()?
         .args(args)
         .output()
         .context("failed to run mutagen")?;

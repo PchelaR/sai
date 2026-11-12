@@ -7,11 +7,12 @@ use russh::{ChannelMsg, client};
 
 use super::host_key::HostKeyPolicy;
 use crate::config::Config;
-use crate::quote;
+use crate::{logs, output, quote};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 const STDERR_TAIL_LINES: usize = 30;
+const PROGRESS_INDENT: &str = "  ";
 
 pub type Env<'a> = [(&'a str, String)];
 
@@ -73,10 +74,14 @@ impl Session {
     }
 
     pub async fn run_script(&self, script: &str, env: &Env<'_>) -> Result<()> {
-        self.output(script, env).await.map(|_| ())
+        self.execute(script, env, true).await.map(|_| ())
     }
 
     pub async fn output(&self, script: &str, env: &Env<'_>) -> Result<String> {
+        self.execute(script, env, false).await
+    }
+
+    async fn execute(&self, script: &str, env: &Env<'_>, stream: bool) -> Result<String> {
         let mut channel = self.handle.channel_open_session().await?;
         channel.exec(true, self.command(script, env)).await?;
         channel.data(self.stdin().as_bytes()).await?;
@@ -87,7 +92,20 @@ impl Session {
         let mut exit_status = None;
         while let Some(message) = channel.wait().await {
             match message {
-                ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
+                ChannelMsg::Data { data } => {
+                    stdout.extend_from_slice(&data);
+                    if stream {
+                        while let Some(end) = stdout.iter().position(|byte| *byte == b'\n') {
+                            let line: Vec<u8> = stdout.drain(..=end).collect();
+                            let line = String::from_utf8_lossy(&line);
+                            if line.starts_with(PROGRESS_INDENT) {
+                                output::info(line.trim_end());
+                            } else {
+                                logs::line(line.trim_end());
+                            }
+                        }
+                    }
+                }
                 ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
                 ChannelMsg::ExitStatus {
                     exit_status: status,

@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
@@ -12,7 +11,7 @@ pub fn is_large(bytes: u64) -> bool {
 }
 
 pub fn of(path: &Path) -> u64 {
-    let skipped: HashSet<&str> = ignores::BUILD
+    let skipped: Vec<&str> = ignores::BUILD
         .iter()
         .chain(secrets::PATTERNS)
         .filter_map(|pattern| pattern.strip_suffix('/'))
@@ -29,7 +28,12 @@ pub fn of(path: &Path) -> u64 {
                 continue;
             };
             if kind.is_dir() {
-                if !skipped.contains(entry.file_name().to_string_lossy().as_ref()) {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if !skipped
+                    .iter()
+                    .any(|pattern| ignores::matches(pattern, &name))
+                {
                     pending.push(entry.path());
                 }
             } else if kind.is_file() {
@@ -71,13 +75,22 @@ mod tests {
     #[test]
     fn skips_what_is_not_synced() {
         let root = std::env::temp_dir().join(format!("sai-size-{}", std::process::id()));
-        for dir in ["src", "node_modules/x", ".git", "target"] {
+        for dir in [
+            "src",
+            "node_modules/x",
+            ".git",
+            "target",
+            "venv",
+            "app.egg-info",
+        ] {
             fs::create_dir_all(root.join(dir)).unwrap();
         }
         fs::write(root.join("src/a"), [0u8; 100]).unwrap();
         fs::write(root.join("node_modules/x/b"), [0u8; 1000]).unwrap();
         fs::write(root.join(".git/c"), [0u8; 1000]).unwrap();
         fs::write(root.join("target/d"), [0u8; 1000]).unwrap();
+        fs::write(root.join("venv/e"), [0u8; 1000]).unwrap();
+        fs::write(root.join("app.egg-info/f"), [0u8; 1000]).unwrap();
         assert_eq!(of(&root), 100);
         fs::remove_dir_all(&root).unwrap();
     }

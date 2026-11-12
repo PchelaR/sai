@@ -1,10 +1,14 @@
 use serde::Deserialize;
 
+use crate::project::size::human;
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
     #[serde(default)]
     pub name: String,
+    #[serde(default)]
+    pub mode: String,
     #[serde(default)]
     pub paused: bool,
     #[serde(default)]
@@ -39,11 +43,24 @@ struct Endpoint {
     #[serde(default)]
     path: String,
     #[serde(default)]
+    staging_progress: Option<Staging>,
+    #[serde(default)]
     connected: bool,
     #[serde(default)]
     scan_problems: Vec<Problem>,
     #[serde(default)]
     transition_problems: Vec<Problem>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Staging {
+    #[serde(default)]
+    received_files: u64,
+    #[serde(default)]
+    expected_files: u64,
+    #[serde(default)]
+    total_received_size: u64,
 }
 
 #[derive(Deserialize)]
@@ -57,6 +74,31 @@ struct Problem {
 impl Session {
     pub fn local_path(&self) -> &str {
         &self.alpha.path
+    }
+
+    pub fn progress(&self) -> String {
+        let staging = self
+            .beta
+            .staging_progress
+            .as_ref()
+            .or(self.alpha.staging_progress.as_ref());
+        match (self.status.as_str(), staging) {
+            ("staging-alpha" | "staging-beta", Some(staging)) => format!(
+                "uploading: {} of {} files, {} so far",
+                staging.received_files,
+                staging.expected_files,
+                human(staging.total_received_size)
+            ),
+            ("staging-alpha" | "staging-beta", None) => "uploading files".to_owned(),
+            ("connecting-alpha" | "connecting-beta" | "disconnected", _) => {
+                "connecting to the VPS".to_owned()
+            }
+            ("scanning" | "waiting-for-rescan", _) => "looking through the files".to_owned(),
+            ("reconciling", _) => "comparing files".to_owned(),
+            ("transitioning", _) => "writing files on the VPS".to_owned(),
+            ("saving" | "watching", _) => "finishing".to_owned(),
+            (other, _) => other.replace('-', " "),
+        }
     }
 
     pub fn summary(&self) -> String {
@@ -132,6 +174,25 @@ mod tests {
         assert!(session.issues().is_empty());
         assert_eq!(session.summary(), "watching");
         assert_eq!(session.ignore.paths, ["target/"]);
+    }
+
+    #[test]
+    fn describes_upload_progress() {
+        let session = parse(
+            r#"{"status":"staging-beta","beta":{"connected":true,"stagingProgress":{"receivedFiles":120,"expectedFiles":3400,"totalReceivedSize":1572864}}}"#,
+        );
+        assert_eq!(
+            session.progress(),
+            "uploading: 120 of 3400 files, 1.5 MB so far"
+        );
+        assert_eq!(
+            parse(r#"{"status":"scanning"}"#).progress(),
+            "looking through the files"
+        );
+        assert_eq!(
+            parse(r#"{"status":"staging-beta"}"#).progress(),
+            "uploading files"
+        );
     }
 
     #[test]

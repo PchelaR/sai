@@ -9,7 +9,7 @@ if ! docker image inspect "$base" >/dev/null 2>&1; then
 fi
 
 if ! docker image inspect "$image" >/dev/null 2>&1; then
-  echo "==> Building $agent image"
+  echo "==> Building $agent image, the first time takes 2-5 minutes"
   printf '%s' "$dockerfile" | base64 -d | docker_build -t "$image" --build-arg BASE="$base" -
   docker builder prune -af >/dev/null 2>&1 || true
 fi

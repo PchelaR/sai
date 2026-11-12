@@ -129,6 +129,7 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
         registry.save()?;
     }
 
+    output::step("Preparing the VPS");
     tools::install(&config::instructions()?)?;
     for target in project.targets() {
         mutagen::sync(&target)?;
@@ -136,6 +137,7 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
     let mut secret_args = vec![remote_path.as_str()];
     secret_args.extend(secrets::names());
     remote::run(REMOVE_SECRETS, &secret_args)?;
+    output::step("Saving a snapshot of the project");
     snapshot::take(name)?;
 
     let image = image::agent(agent);
