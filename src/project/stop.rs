@@ -10,9 +10,9 @@ pub fn run(name: Option<&str>) -> Result<()> {
     let project = registry.resolve(name)?;
     let name = project.name.as_str();
     remote::run(STOP, &[&id(name)])?;
-    for target in project.targets() {
-        if mutagen::session(&target.id)?.is_some_and(|session| !session.paused) {
-            mutagen::pause(&target.id)?;
+    for id in project.session_ids() {
+        if mutagen::session(&id)?.is_some_and(|session| !session.paused) {
+            mutagen::pause(&id)?;
         }
     }
     output::info(&format!("Stopped {name}. Resume with: sai chat {name}"));

@@ -1,9 +1,9 @@
 [Unit]
-Description=sai project snapshots every 15 minutes
+Description=sai project snapshots every 3 minutes
 
 [Timer]
-OnBootSec=5min
-OnUnitActiveSec=15min
+OnBootSec=3min
+OnUnitActiveSec=3min
 
 [Install]
 WantedBy=timers.target

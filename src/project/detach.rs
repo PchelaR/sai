@@ -58,12 +58,8 @@ fn find(project: &Project, dir_path: &str) -> Result<Folder> {
 fn detach(registry: &mut Registry, project: &Project, folder: &Folder) -> Result<()> {
     let name = project.name.as_str();
     let target = project.target(folder);
-    if let Some(session) = mutagen::session(&target.id)? {
-        if !session.paused {
-            mutagen::flush(&target.id)?;
-        }
-        mutagen::terminate(&target.id)?;
-    }
+    mutagen::finish(&target.id)?;
+    mutagen::drop_if_present(&project.git_target(folder).id)?;
     snapshot::take(name)?;
     remote::run(DETACH, &[&target.remote])?;
     registry.remove_folder(name, &folder.path)?;

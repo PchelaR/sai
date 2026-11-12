@@ -5,8 +5,8 @@ tools=$(dirname "$(dirname "$(readlink -f "$0")")")
 projects=$HOME/projects
 snapshots=$HOME/snapshots
 excludes=$tools/snapshot-excludes
-recent_seconds=86400
-recent_limit=48
+all_seconds=3600
+hourly_seconds=86400
 daily_seconds=604800
 min_free_kb=2097152
 
@@ -34,10 +34,11 @@ take() {
   [ -d "$source" ] || return 0
   mkdir -p "$root"
   filters "$name"
-  local previous
+  local previous changes=
   previous=$(stamps "$name" | tail -n 1)
-  if [ -n "$previous" ] && [ -z "$(rsync -a --dry-run --itemize-changes --delete "${filter_args[@]}" "$source/" "$root/$previous/")" ]; then
-    return 0
+  if [ -n "$previous" ]; then
+    changes=$(rsync -a --dry-run --itemize-changes --delete "${filter_args[@]}" "$source/" "$root/$previous/")
+    [ -n "$changes" ] || return 0
   fi
   local stamp
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
@@ -45,27 +46,53 @@ take() {
   rm -rf "$root/$stamp.partial"
   rsync -a --delete "${filter_args[@]}" ${previous:+--link-dest="$root/$previous"} "$source/" "$root/$stamp.partial/"
   mv "$root/$stamp.partial" "$root/$stamp"
+  mkdir -p "$root/.meta"
+  if [ -n "$previous" ]; then
+    summarize <<<"$changes" > "$root/.meta/$stamp"
+  else
+    echo "first snapshot" > "$root/.meta/$stamp"
+  fi
   prune "$name"
   free_space
 }
 
+summarize() {
+  awk '
+    /^\*deleting / { if ($2 !~ /\/$/) deleted++; next }
+    /^>f\+\+\+/ { added++; next }
+    /^>f/ { changed++ }
+    END {
+      if (deleted) parts = parts sep "deleted " deleted; if (deleted) sep = ", "
+      if (changed) parts = parts sep "changed " changed; if (changed) sep = ", "
+      if (added) parts = parts sep "added " added
+      print (parts == "" ? "small changes" : parts)
+    }'
+}
+
+drop() {
+  rm -rf "${snapshots:?}/$1/$2" "${snapshots:?}/$1/.meta/$2"
+}
+
 prune() {
-  local root=$snapshots/$1
-  local now recent=0 last_day= newest=1 stamp age day
+  local now newest=1 stamp age bucket last_bucket=
   now=$(date -u +%s)
   for stamp in $(stamps "$1" | sort -r); do
     age=$((now - $(epoch "$stamp")))
-    day=${stamp:0:8}
-    if [ -n "$newest" ]; then
+    if [ -n "$newest" ] || [ "$age" -lt "$all_seconds" ]; then
       newest=
-      recent=1
-      last_day=$day
-    elif [ "$age" -lt "$recent_seconds" ] && [ "$recent" -lt "$recent_limit" ]; then
-      recent=$((recent + 1))
-    elif [ "$age" -lt "$daily_seconds" ] && [ "$day" != "$last_day" ]; then
-      last_day=$day
+      continue
+    elif [ "$age" -lt "$hourly_seconds" ]; then
+      bucket=${stamp:0:11}
+    elif [ "$age" -lt "$daily_seconds" ]; then
+      bucket=${stamp:0:8}
     else
-      rm -rf "${root:?}/$stamp"
+      drop "$1" "$stamp"
+      continue
+    fi
+    if [ "$bucket" = "$last_bucket" ]; then
+      drop "$1" "$stamp"
+    else
+      last_bucket=$bucket
     fi
   done
 }
@@ -79,17 +106,16 @@ free_space() {
       done | awk -F/ '{ print $NF " " $0 }' | sort | head -n 1 | cut -d' ' -f2
     )
     [ -n "$oldest" ] || return 0
-    rm -rf "$oldest"
+    drop "$(basename "$(dirname "$oldest")")" "$(basename "$oldest")"
   done
 }
 
 list() {
-  local stamp found=
+  local stamp summary
   for stamp in $(stamps "$1" | sort -r); do
-    printf '%s  %s\n' "$stamp" "$(date -u -d "@$(epoch "$stamp")" '+%Y-%m-%d %H:%M:%S UTC')"
-    found=1
+    summary=$(cat "$snapshots/$1/.meta/$stamp" 2>/dev/null || true)
+    printf '%s\t%s\n' "$stamp" "$summary"
   done
-  [ -n "$found" ] || echo "No snapshots yet"
 }
 
 restore() {

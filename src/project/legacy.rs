@@ -35,19 +35,19 @@ pub fn migrate(registry: &mut Registry) -> Result<()> {
             ]
         };
         let agent = remote::output(MIGRATE, &as_strs(&args("check")))?;
-        mutagen::flush(&session.name)
+        mutagen::finish(&session.name)
             .with_context(|| format!("cannot upgrade {name} while its sync is not connected"))?;
-        mutagen::terminate(&session.name)?;
-        remote::run(MIGRATE, &as_strs(&args("move")))?;
         registry.insert(Project {
             name: name.clone(),
             agent: Agent::parse(agent.trim()),
             folders: vec![Folder {
                 name: folder.clone(),
                 path,
+                git: false,
             }],
         });
         registry.save()?;
+        remote::run(MIGRATE, &as_strs(&args("move")))?;
         output::info(&format!(
             "{name} now has the folder {folder}, the agent sees it as /workspace/{folder}"
         ));

@@ -24,9 +24,16 @@ pub fn spawn() -> Receiver<Result<Loaded, String>> {
 }
 
 fn load() -> Result<Loaded> {
+    let ip = Config::load()?.ip;
+    let (projects, vps) = thread::scope(|scope| {
+        let projects = scope.spawn(list::load);
+        let vps = status::load();
+        (projects.join(), vps)
+    });
+    let projects = projects.map_err(|_| anyhow::anyhow!("loading the projects crashed"))??;
     Ok(Loaded {
-        ip: Config::load()?.ip,
-        projects: list::load()?,
-        vps: status::load()?,
+        ip,
+        projects,
+        vps: vps?,
     })
 }

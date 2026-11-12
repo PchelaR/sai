@@ -20,6 +20,14 @@ const IGNORE_FILE: &str = ".saiignore";
 const LIST_TEMPLATE: &str = "{{ json . }}";
 const MIRROR: &str = "one-way-replica";
 const TWO_WAY: &str = "two-way-safe";
+const GIT_IGNORES: &[&str] = &[
+    "/config",
+    "/hooks/",
+    "/logs/",
+    "/FETCH_HEAD",
+    "/lfs/",
+    "*.lock",
+];
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(2);
 const REPEAT_AFTER: Duration = Duration::from_secs(20);
 
@@ -81,6 +89,27 @@ pub fn sync(target: &SyncTarget) -> Result<()> {
     Ok(())
 }
 
+pub fn sync_git(target: &SyncTarget) -> Result<()> {
+    let ignores: Vec<String> = GIT_IGNORES
+        .iter()
+        .map(|pattern| pattern.to_string())
+        .collect();
+    if let Some(session) = session(&target.id)? {
+        if session.ignore.paths == ignores {
+            if session.paused {
+                run(&["sync", "resume", &target.id])?;
+            }
+            return Ok(());
+        }
+        terminate(&target.id)?;
+    }
+    output::step(&format!(
+        "Uploading the git history of {} (read-only for the agent)",
+        target.local.display()
+    ));
+    mirror_progress(target, &ignores)
+}
+
 pub fn keep_local(target: &SyncTarget) -> Result<()> {
     ensure!(
         session(&target.id)?.is_some(),
@@ -88,6 +117,24 @@ pub fn keep_local(target: &SyncTarget) -> Result<()> {
         target.local.display()
     );
     resync(target, &ignores(target)?)
+}
+
+pub fn drop_if_present(id: &str) -> Result<()> {
+    if session(id)?.is_some() {
+        terminate(id)?;
+    }
+    Ok(())
+}
+
+pub fn finish(id: &str) -> Result<()> {
+    let Some(session) = session(id)? else {
+        return Ok(());
+    };
+    if session.paused {
+        run(&["sync", "resume", id])?;
+    }
+    flush(id)?;
+    terminate(id)
 }
 
 pub fn flush(id: &str) -> Result<()> {
@@ -121,13 +168,17 @@ fn resync(target: &SyncTarget, ignores: &[String]) -> Result<()> {
 }
 
 fn mirror(target: &SyncTarget, ignores: &[String]) -> Result<()> {
+    mirror_progress(target, ignores)?;
+    terminate(&target.id)
+}
+
+fn mirror_progress(target: &SyncTarget, ignores: &[String]) -> Result<()> {
     output::info(&format!(
         "  about {} to upload, on a slow connection this takes a while",
         crate::project::size::human(crate::project::size::of(&target.local))
     ));
     create(target, MIRROR, ignores)?;
-    wait_with_progress(&target.id)?;
-    terminate(&target.id)
+    wait_with_progress(&target.id)
 }
 
 fn wait_with_progress(id: &str) -> Result<()> {

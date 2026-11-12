@@ -52,6 +52,7 @@ else
     "${mounts[@]}" \
     -e CARGO_HOME=/state/cargo \
     -e PIP_CACHE_DIR=/state/pip \
+    -e GIT_OPTIONAL_LOCKS=0 \
     "$image" >/dev/null
 fi
 

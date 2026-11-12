@@ -149,6 +149,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             agent,
             alias.as_deref(),
             &attach::ask_large,
+            &attach::ask_git,
         ),
         Command::Detach { project, dir_path } => {
             project::detach::run_with_confirmation(&project, &dir_path)

@@ -1,5 +1,5 @@
 mod report;
-mod time;
+pub mod time;
 
 use std::env::consts;
 use std::ffi::OsStr;

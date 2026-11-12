@@ -6,7 +6,7 @@ free -m | awk '
 '
 df -h / | awk 'NR == 2 { printf "disk\t%s / %s (%s)\n", $3, $2, $5 }'
 
-ids=$(docker ps -q --filter label=sai.path)
+ids=$(docker ps -q --filter label=sai.project)
 if [ -n "$ids" ]; then
   docker stats --no-stream --format 'agent	{{.Name}}	{{.CPUPerc}}	{{.MemUsage}}' $ids
 fi

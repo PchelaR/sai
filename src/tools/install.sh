@@ -24,6 +24,7 @@ done
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 if [ -n "$changed" ]; then
   systemctl --user daemon-reload
+  systemctl --user restart sai-snapshot.timer >/dev/null 2>&1 || true
 fi
 if ! systemctl --user is-enabled --quiet sai-snapshot.timer; then
   systemctl --user enable --now sai-snapshot.timer >/dev/null 2>&1

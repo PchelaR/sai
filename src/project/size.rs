@@ -11,6 +11,15 @@ pub fn is_large(bytes: u64) -> bool {
 }
 
 pub fn of(path: &Path) -> u64 {
+    measure(path, u64::MAX)
+}
+
+pub fn exceeds_large(path: &Path) -> Option<u64> {
+    let size = measure(path, LARGE);
+    is_large(size).then_some(size)
+}
+
+fn measure(path: &Path, stop_after: u64) -> u64 {
     let skipped: Vec<&str> = ignores::BUILD
         .iter()
         .chain(secrets::PATTERNS)
@@ -38,6 +47,9 @@ pub fn of(path: &Path) -> u64 {
                 }
             } else if kind.is_file() {
                 total += entry.metadata().map_or(0, |metadata| metadata.len());
+                if total > stop_after {
+                    return total;
+                }
             }
         }
     }

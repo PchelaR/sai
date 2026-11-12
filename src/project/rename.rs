@@ -12,12 +12,10 @@ pub fn run(old: &str, new: &str) -> Result<()> {
     ensure!(registry.find(new).is_none(), "project {new} already exists");
     remote::run(RENAME, &["check", old, new])?;
     for target in project.targets() {
-        if let Some(session) = mutagen::session(&target.id)? {
-            if !session.paused {
-                mutagen::flush(&target.id)?;
-            }
-            mutagen::terminate(&target.id)?;
-        }
+        mutagen::finish(&target.id)?;
+    }
+    for target in project.git_targets() {
+        mutagen::drop_if_present(&target.id)?;
     }
     remote::run(RENAME, &["move", old, new])?;
     registry.rename(old, new)?;

@@ -19,11 +19,18 @@ use crate::vps::USER;
 pub use registry::{Registry, same_path};
 
 const MAX_NAME_LENGTH: usize = 40;
+const GIT_DIR: &str = ".git";
+const GIT_SUFFIX: &str = "--git";
+
+pub fn is_git_repo(path: &Path) -> bool {
+    path.join(GIT_DIR).is_dir()
+}
 
 #[derive(Clone)]
 pub struct Folder {
     pub name: String,
     pub path: PathBuf,
+    pub git: bool,
 }
 
 #[derive(Clone)]
@@ -63,6 +70,31 @@ impl Project {
         }
     }
 
+    pub fn git_targets(&self) -> Vec<SyncTarget> {
+        self.folders
+            .iter()
+            .filter(|folder| folder.git)
+            .map(|folder| self.git_target(folder))
+            .collect()
+    }
+
+    pub fn git_target(&self, folder: &Folder) -> SyncTarget {
+        let target = self.target(folder);
+        SyncTarget {
+            id: format!("{}{GIT_SUFFIX}", target.id),
+            local: target.local.join(GIT_DIR),
+            remote: format!("{}/{GIT_DIR}", target.remote),
+        }
+    }
+
+    pub fn session_ids(&self) -> Vec<String> {
+        self.targets()
+            .into_iter()
+            .chain(self.git_targets())
+            .map(|target| target.id)
+            .collect()
+    }
+
     pub fn folder_names(&self) -> Vec<&str> {
         self.folders
             .iter()
@@ -89,6 +121,19 @@ pub fn local_path(dir_path: &str) -> Result<PathBuf> {
         .with_context(|| format!("directory not found: {dir_path}"))?;
     ensure!(path.is_dir(), "not a directory: {}", path.display());
     Ok(path)
+}
+
+pub fn ensure_attachable(path: &Path) -> Result<()> {
+    let path = fs::canonicalize(path)
+        .map(without_verbatim_prefix)
+        .unwrap_or_else(|_| path.to_path_buf());
+    let home = etcetera::home_dir().ok();
+    ensure!(
+        path.parent().is_some() && home.is_none_or(|home| !same_path(&home, &path)),
+        "{} is your home folder or a whole disk, attach the folder of a single project instead",
+        path.display()
+    );
+    Ok(())
 }
 
 pub fn current_dir() -> Result<PathBuf> {

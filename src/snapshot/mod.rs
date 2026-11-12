@@ -3,6 +3,7 @@ use std::path::{Component, Path};
 use anyhow::{Result, ensure};
 use dialoguer::Confirm;
 
+use crate::logs::time;
 use crate::project::{Project, Registry};
 use crate::{mutagen, output, remote, tools};
 
@@ -18,20 +19,57 @@ pub fn purge(name: &str) -> Result<()> {
     remote::run(RUN, &[&tools::snapshots_path(), "purge", name])
 }
 
+pub struct Snapshot {
+    pub stamp: String,
+    pub summary: String,
+}
+
+impl Snapshot {
+    pub fn when(&self) -> (String, String) {
+        time::stamp_seconds(&self.stamp)
+            .map(time::describe)
+            .unwrap_or_else(|| (self.stamp.clone(), String::new()))
+    }
+}
+
 pub fn list(name: Option<&str>) -> Result<()> {
     let registry = Registry::open()?;
     let project = registry.resolve(name)?;
-    remote::run(RUN, &[&tools::snapshots_path(), "list", &project.name])
+    let snapshots = snapshots(&project.name)?;
+    if snapshots.is_empty() {
+        output::info("No snapshots yet");
+        return Ok(());
+    }
+    for snapshot in &snapshots {
+        let (ago, date) = snapshot.when();
+        output::info(&format!(
+            "{}  {ago:<12} {date:<17} {}",
+            snapshot.stamp, snapshot.summary
+        ));
+    }
+    output::info(&format!(
+        "Restore with: sai restore <snapshot> [path] --project {}",
+        project.name
+    ));
+    Ok(())
 }
 
-pub fn stamps(name: &str) -> Result<Vec<String>> {
+pub fn snapshots(name: &str) -> Result<Vec<Snapshot>> {
     let output = remote::output(RUN, &[&tools::snapshots_path(), "list", name])?;
-    Ok(output
+    Ok(parse(&output))
+}
+
+fn parse(output: &str) -> Vec<Snapshot> {
+    output
         .lines()
-        .filter_map(|line| line.split_whitespace().next())
-        .filter(|stamp| is_stamp(stamp))
-        .map(str::to_owned)
-        .collect())
+        .filter_map(|line| {
+            let (stamp, summary) = line.split_once('\t').unwrap_or((line, ""));
+            is_stamp(stamp).then(|| Snapshot {
+                stamp: stamp.to_owned(),
+                summary: summary.trim().to_owned(),
+            })
+        })
+        .collect()
 }
 
 pub fn restore_with_confirmation(
@@ -123,6 +161,15 @@ fn validate_path(path: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{is_stamp, validate_path};
+
+    #[test]
+    fn parses_snapshot_lists() {
+        let snapshots =
+            super::parse("20261112T095617Z\tdeleted 3, changed 1\n20261112T090000Z\t\ngarbage\n");
+        assert_eq!(snapshots.len(), 2);
+        assert_eq!(snapshots[0].summary, "deleted 3, changed 1");
+        assert_eq!(snapshots[1].summary, "");
+    }
 
     #[test]
     fn recognizes_snapshot_stamps() {

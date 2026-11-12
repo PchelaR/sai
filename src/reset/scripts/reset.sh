@@ -1,6 +1,6 @@
 mode=$1
 
-containers=$(docker ps -aq --filter label=sai.path)
+containers=$( (docker ps -aq --filter label=sai.project; docker ps -aq --filter label=sai.path) | sort -u)
 if [ -n "$containers" ]; then
   docker rm -f $containers >/dev/null
 fi

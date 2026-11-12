@@ -96,6 +96,7 @@ fn snapshot_excludes() -> String {
     ignores::BUILD
         .iter()
         .chain(secrets::PATTERNS)
+        .chain(&[".git/"])
         .map(|pattern| format!("{pattern}\n"))
         .collect()
 }

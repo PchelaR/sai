@@ -57,5 +57,7 @@ else
 fi
 
 for dir in "$HOME"/projects/*/; do
-  [ -d "$dir" ] && printf 'project\t%s\n' "$(basename "$dir")"
+  if [ -d "$dir" ]; then
+    printf 'project\t%s\n' "$(basename "$dir")"
+  fi
 done

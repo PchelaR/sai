@@ -33,6 +33,66 @@ decision = "deny"
 pattern = "Bash(git push*)"
 reason = "Pushes are made by the user"
 
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(git checkout*)"
+reason = "The agent can read git history but not change branches, history or files through git"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(git switch*)"
+reason = "The agent can read git history but not change branches, history or files through git"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(git restore*)"
+reason = "The agent can read git history but not change branches, history or files through git"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(git reset*)"
+reason = "The agent can read git history but not change branches, history or files through git"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(git stash*)"
+reason = "The agent can read git history but not change branches, history or files through git"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(git merge*)"
+reason = "The agent can read git history but not change branches, history or files through git"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(git rebase*)"
+reason = "The agent can read git history but not change branches, history or files through git"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(git cherry-pick*)"
+reason = "The agent can read git history but not change branches, history or files through git"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(git revert*)"
+reason = "The agent can read git history but not change branches, history or files through git"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(git pull*)"
+reason = "The agent can read git history but not change branches, history or files through git"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(git am*)"
+reason = "The agent can read git history but not change branches, history or files through git"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(git worktree*)"
+reason = "The agent can read git history but not change branches, history or files through git"
+
 [[hooks]]
 event = "PreToolUse"
 matcher = "Bash"

@@ -1,7 +1,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine, prelude::BASE64_STANDARD};
@@ -12,6 +12,8 @@ use crate::{console, logs, output, quote, ssh};
 const PRELUDE: &str = "set -euo pipefail\n";
 const SSH_MISSING: &str = "failed to run ssh, make sure OpenSSH client is installed";
 const SSH_CONNECTION_FAILED: i32 = 255;
+const LIVE_SESSION: Duration = Duration::from_secs(10);
+const RETRY_DELAY: Duration = Duration::from_secs(5);
 
 pub fn run(script: &str, args: &[&str]) -> Result<()> {
     let started = Instant::now();
@@ -32,13 +34,14 @@ pub fn run(script: &str, args: &[&str]) -> Result<()> {
     let stderr = stderr
         .and_then(|reader| reader.join().ok())
         .unwrap_or_default();
-    check(started, status, &stderr)
+    check(script, started, status, &stderr)
 }
 
 pub fn output(script: &str, args: &[&str]) -> Result<String> {
     let started = Instant::now();
     let output = spawn(script, args)?.wait_with_output()?;
     check(
+        script,
         started,
         output.status,
         &String::from_utf8_lossy(&output.stderr),
@@ -49,18 +52,41 @@ pub fn output(script: &str, args: &[&str]) -> Result<String> {
 pub fn interactive(command: &str) -> Result<()> {
     console::ensure_supported()?;
     logs::line(&format!("ssh -t {HOST_ALIAS} {command}"));
-    let status = Command::new(ssh::program("ssh"))
-        .args(["-t", "-q"])
-        .arg(HOST_ALIAS)
-        .arg(format!(
-            "bash <(echo {} | base64 -d)",
-            BASE64_STANDARD.encode(command)
-        ))
-        .status()
-        .context(SSH_MISSING)?;
-    logs::line(&format!("remote session ended with {status}"));
-    ensure!(status.success(), "remote session ended with {status}");
-    Ok(())
+    let remote = format!(
+        "bash <(echo {} | base64 -d)",
+        BASE64_STANDARD.encode(command)
+    );
+    let mut reconnecting = false;
+    loop {
+        let started = Instant::now();
+        let status = {
+            let _session = console::begin_session();
+            Command::new(ssh::program("ssh"))
+                .args(["-t", "-q"])
+                .args(["-o", "ConnectTimeout=10"])
+                .args(["-o", "ServerAliveInterval=10"])
+                .args(["-o", "ServerAliveCountMax=3"])
+                .arg(HOST_ALIAS)
+                .arg(&remote)
+                .status()
+                .context(SSH_MISSING)?
+        };
+        logs::line(&format!("remote session ended with {status}"));
+        if status.success() {
+            return Ok(());
+        }
+        let connection_lost = status.code() == Some(SSH_CONNECTION_FAILED)
+            && (reconnecting || started.elapsed() >= LIVE_SESSION);
+        ensure!(connection_lost, "remote session ended with {status}");
+        if !reconnecting {
+            output::info("");
+            output::info(
+                "Connection to the VPS was lost. The agent keeps working there, reconnecting... Press Ctrl+C to stop",
+            );
+        }
+        reconnecting = true;
+        thread::sleep(RETRY_DELAY);
+    }
 }
 
 fn spawn(script: &str, args: &[&str]) -> Result<Child> {
@@ -99,7 +125,7 @@ fn first_line(script: &str) -> &str {
         .unwrap_or_default()
 }
 
-fn check(started: Instant, status: ExitStatus, stderr: &str) -> Result<()> {
+fn check(script: &str, started: Instant, status: ExitStatus, stderr: &str) -> Result<()> {
     let stderr = stderr.trim();
     logs::line(&format!(
         "finished with {status} in {:.1}s{}{stderr}",
@@ -114,8 +140,14 @@ fn check(started: Instant, status: ExitStatus, stderr: &str) -> Result<()> {
             )
         }
         Some(SSH_CONNECTION_FAILED) => {
-            bail!("could not connect to the VPS, run `sai setup` first\n{stderr}")
+            bail!(
+                "could not connect to the VPS. Check your internet connection and that the VPS is running, if it was never set up run `sai setup`\n{stderr}"
+            )
         }
+        _ if stderr.is_empty() => bail!(
+            "a step on the VPS (`{}`) stopped with {status} without a message, details are in `sai logs`",
+            first_line(script)
+        ),
         _ => bail!("{stderr}"),
     }
 }

@@ -16,6 +16,7 @@ const ENSURE_IMAGE: &str = concat!(
 );
 const ENSURE_CONTAINER: &str = include_str!("scripts/ensure_container.sh");
 const FREE_SPACE: &str = include_str!("scripts/free_space.sh");
+const GIT_CONFIG: &str = include_str!("scripts/git_config.sh");
 const RESERVE: u64 = 2 * 1024 * 1024 * 1024;
 
 pub struct Attached {
@@ -29,9 +30,11 @@ pub fn run(
     agent: Option<Agent>,
     alias: Option<&str>,
     approve_large: &dyn Fn(&Path, u64) -> Result<bool>,
+    approve_git: &dyn Fn(&Path) -> Result<bool>,
 ) -> Result<()> {
     let mut registry = Registry::open()?;
     let path = project::local_path(dir_path)?;
+    project::ensure_attachable(&path)?;
     let folder = match alias {
         Some(alias) => alias.to_owned(),
         None => project::folder_name(&path)?,
@@ -51,19 +54,27 @@ pub fn run(
         .folders
         .iter()
         .find(|existing| project::same_path(&existing.path, &path))
-        .map(|existing| existing.name.clone());
+        .map(|existing| (existing.name.clone(), existing.git));
     let folder = match already {
-        Some(existing) => existing,
+        Some((existing, git)) => {
+            if !git && project::is_git_repo(&path) && approve_git(&path)? {
+                registry.set_git(name, &path, true)?;
+                registry.save()?;
+            }
+            existing
+        }
         None => {
             if !has_room(&path, approve_large)? {
                 output::info("Nothing was attached");
                 return Ok(());
             }
+            let git = project::is_git_repo(&path) && approve_git(&path)?;
             registry.add_folder(
                 name,
                 Folder {
                     name: folder.clone(),
                     path: path.clone(),
+                    git,
                 },
             )?;
             registry.save()?;
@@ -79,28 +90,32 @@ pub fn run(
     Ok(())
 }
 
-pub fn current_folder(registry: &mut Registry, agent: Option<Agent>) -> Result<String> {
+pub fn current_folder(
+    registry: &mut Registry,
+    agent: Option<Agent>,
+    approve_git: &dyn Fn(&Path) -> Result<bool>,
+) -> Result<String> {
     if let Ok(project) = registry.resolve(None) {
         return Ok(project.name.clone());
     }
     let path = project::current_dir()?;
-    let home = etcetera::home_dir().ok();
-    ensure!(
-        path.parent().is_some() && home.is_none_or(|home| !project::same_path(&home, &path)),
-        "run sai inside a project folder or name the project, see `sai list`"
-    );
+    project::ensure_attachable(&path).map_err(|_| {
+        anyhow::anyhow!("run sai inside a project folder or name the project, see `sai list`")
+    })?;
     let name = project::folder_name(&path)?;
     ensure!(
         registry.find(&name).is_none(),
         "{} is not attached yet and a project named {name} already exists. Add the folder to it with `sai attach {name} .` or create another project with `sai attach <new-name> .`",
         path.display()
     );
+    let git = project::is_git_repo(&path) && approve_git(&path)?;
     registry.create(&name, agent.unwrap_or_default())?;
     registry.add_folder(
         &name,
         Folder {
             name: name.clone(),
             path: path.clone(),
+            git,
         },
     )?;
     registry.save()?;
@@ -134,6 +149,17 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
     for target in project.targets() {
         mutagen::sync(&target)?;
     }
+    let git_targets = project.git_targets();
+    for target in &git_targets {
+        mutagen::sync_git(target)?;
+    }
+    if !git_targets.is_empty() {
+        let paths: Vec<&str> = git_targets
+            .iter()
+            .map(|target| target.remote.as_str())
+            .collect();
+        remote::run(GIT_CONFIG, &paths)?;
+    }
     let mut secret_args = vec![remote_path.as_str()];
     secret_args.extend(secrets::names());
     remote::run(REMOVE_SECRETS, &secret_args)?;
@@ -164,7 +190,7 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
     container_args.extend(mounts.iter().map(String::as_str));
     remote::run(ENSURE_CONTAINER, &container_args)?;
 
-    for target in project.targets() {
+    for target in project.targets().into_iter().chain(project.git_targets()) {
         mutagen::report_issues(&target.id)?;
     }
     let project = registry.get(name)?.clone();
@@ -176,6 +202,20 @@ pub fn ask_large(path: &Path, size: u64) -> Result<bool> {
         .with_prompt(large_question(path, size))
         .default(false)
         .interact()?)
+}
+
+pub fn ask_git(path: &Path) -> Result<bool> {
+    Ok(dialoguer::Confirm::new()
+        .with_prompt(git_question(path))
+        .default(false)
+        .interact()?)
+}
+
+pub fn git_question(path: &Path) -> String {
+    format!(
+        "{} is a git repository. Give the agent its history read-only (git log, diff, branches)? If secrets were ever committed, the agent can read them in the history",
+        path.display()
+    )
 }
 
 pub fn large_question(path: &Path, size: u64) -> String {

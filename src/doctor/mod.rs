@@ -11,6 +11,7 @@ use crate::vps::SETUP_MARKER;
 use crate::{console, image, mutagen, remote, ssh};
 use report::Report;
 
+const MIN_WINDOWS_SSH: (u32, u32) = (9, 0);
 const VPS_CHECKS: &str = include_str!("scripts/vps_checks.sh");
 
 pub fn run() -> Result<()> {
@@ -22,7 +23,11 @@ pub fn run() -> Result<()> {
         report.check("ssh key", config.public_key());
     }
     report.check("ssh client", installed(&ssh::program("ssh"), "-V"));
+    check_windows_ssh(&mut report);
     report.check("terminal", console::ensure_supported());
+    if console::is_msys() {
+        report.warn("terminal", console::MSYS_ADVICE);
+    }
     report.check("mutagen", mutagen::ensure_installed());
 
     let Some(config) = config else {
@@ -48,6 +53,26 @@ pub fn run() -> Result<()> {
     check_sync(&mut report)?;
 
     report.finish()
+}
+
+fn check_windows_ssh(report: &mut Report) {
+    if !cfg!(windows) {
+        return;
+    }
+    let Ok(output) = Command::new(ssh::program("ssh")).arg("-V").output() else {
+        return;
+    };
+    let banner = String::from_utf8_lossy(&output.stderr);
+    if let Some(version @ (major, minor)) = ssh::version(&banner)
+        && version < MIN_WINDOWS_SSH
+    {
+        report.warn(
+            "ssh version",
+            format!(
+                "OpenSSH {major}.{minor} on this PC has known terminal bugs, install the latest one from https://github.com/PowerShell/Win32-OpenSSH/releases and sai will use it"
+            ),
+        );
+    }
 }
 
 fn installed(program: &Path, version_flag: &str) -> Result<()> {

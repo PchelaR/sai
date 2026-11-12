@@ -37,10 +37,8 @@ pub fn run(name: &str, purge: bool) -> Result<()> {
     validate_name(name)?;
     let mut registry = Registry::open()?;
     let project = registry.find(name).cloned();
-    for target in project.iter().flat_map(|project| project.targets()) {
-        if mutagen::session(&target.id)?.is_some() {
-            mutagen::terminate(&target.id)?;
-        }
+    for id in project.iter().flat_map(|project| project.session_ids()) {
+        mutagen::drop_if_present(&id)?;
     }
     let mode = if purge { "purge" } else { "keep" };
     let found = remote::output(REMOVE, &[&id(name), &remote_path(name), mode])?;

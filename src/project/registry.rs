@@ -29,6 +29,8 @@ struct StoredProject {
 struct StoredFolder {
     name: String,
     path: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    git: bool,
 }
 
 pub struct Registry {
@@ -58,6 +60,7 @@ impl Registry {
                         .map(|folder| Folder {
                             name: folder.name,
                             path: PathBuf::from(folder.path),
+                            git: folder.git,
                         })
                         .collect(),
                     name: name.clone(),
@@ -82,6 +85,7 @@ impl Registry {
                             .map(|folder| StoredFolder {
                                 name: folder.name.clone(),
                                 path: folder.path.display().to_string(),
+                                git: folder.git,
                             })
                             .collect(),
                     };
@@ -201,6 +205,20 @@ impl Registry {
         Ok(target.folders.remove(index))
     }
 
+    pub fn set_git(&mut self, project: &str, path: &Path, git: bool) -> Result<()> {
+        let target = self
+            .projects
+            .get_mut(project)
+            .with_context(|| format!("no project named {project}"))?;
+        let folder = target
+            .folders
+            .iter_mut()
+            .find(|folder| same_path(&folder.path, path))
+            .with_context(|| format!("{} is not attached to {project}", path.display()))?;
+        folder.git = git;
+        Ok(())
+    }
+
     pub fn set_agent(&mut self, project: &str, agent: Agent) -> Result<()> {
         self.projects
             .get_mut(project)
@@ -274,6 +292,7 @@ mod tests {
         Folder {
             name: name.to_owned(),
             path: PathBuf::from(path),
+            git: false,
         }
     }
 

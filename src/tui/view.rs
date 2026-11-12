@@ -11,10 +11,13 @@ use super::app::{AgentChoice, App, Input, Mode};
 use super::menu::{General, ProjectItem};
 use crate::agent::Agent;
 use crate::project::list::FolderRow;
+use crate::snapshot::Snapshot;
 
 const COMMAND_WIDTH: usize = 12;
 const DESCRIPTION_WIDTH: usize = 36;
 const HIGHLIGHT: &str = "› ";
+const MAX_COMPLETIONS: usize = 30;
+const INPUT_WIDTH: u16 = 90;
 
 pub fn render(frame: &mut Frame, app: &App) {
     let [header, projects, general, footer] = Layout::vertical([
@@ -36,8 +39,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         Mode::Input { purpose, value } => render_input(frame, app, purpose, value),
         Mode::ChooseAgent { selected, purpose } => render_agents(frame, *selected, purpose),
         Mode::Snapshots {
-            stamps, selected, ..
-        } => render_snapshots(frame, stamps, *selected),
+            snapshots,
+            selected,
+            ..
+        } => render_snapshots(frame, snapshots, *selected),
         Mode::Folders {
             project,
             folders,
@@ -45,6 +50,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         } => render_folders(frame, project, folders, *selected),
         Mode::Confirm { question, .. } => render_confirm(frame, question),
         Mode::Help => render_help(frame),
+        Mode::AskGit { path, .. } => render_ask_git(frame, path),
         Mode::Running { title, log, result } => render_running(frame, title, log, result.as_ref()),
     }
 }
@@ -106,6 +112,11 @@ fn render_projects(frame: &mut Frame, app: &App, area: Rect) {
     let rows = app.projects().iter().map(|project| {
         let running =
             usage.and_then(|agents| agents.iter().find(|usage| usage.name == project.name));
+        let style = if project.only_on_vps {
+            Style::new().fg(Color::Yellow)
+        } else {
+            Style::new()
+        };
         Row::new([
             Cell::from(project.name.as_str()),
             Cell::from(project.agent.as_str()),
@@ -115,13 +126,14 @@ fn render_projects(frame: &mut Frame, app: &App, area: Rect) {
             Cell::from(running.map_or("", |usage| usage.memory.as_str())),
             Cell::from(folders(project)),
         ])
+        .style(style)
     });
     let table = Table::new(
         rows,
         [
             Constraint::Length(16),
             Constraint::Length(7),
-            Constraint::Length(9),
+            Constraint::Length(11),
             Constraint::Length(24),
             Constraint::Length(7),
             Constraint::Length(20),
@@ -171,19 +183,38 @@ fn render_agents(frame: &mut Frame, selected: usize, purpose: &AgentChoice) {
     render_list(frame, area, title, items, Some(selected));
 }
 
-fn render_snapshots(frame: &mut Frame, stamps: &[String], selected: usize) {
-    let height = (stamps.len().max(1) as u16 + 2).min(20);
-    let area = popup(frame.area(), 40, height);
+fn render_snapshots(frame: &mut Frame, snapshots: &[Snapshot], selected: usize) {
+    let height = (snapshots.len().max(1) as u16 + 2).min(24);
+    let area = popup(frame.area(), 80, height);
     frame.render_widget(Clear, area);
-    if stamps.is_empty() {
+    if snapshots.is_empty() {
         frame.render_widget(
             Paragraph::new("No snapshots yet").block(Block::bordered().title(" snapshots ")),
             area,
         );
         return;
     }
-    let items = stamps.iter().map(|stamp| ListItem::new(stamp.as_str()));
-    render_list(frame, area, " snapshots ", items, Some(selected));
+    let items = snapshots.iter().map(|snapshot| {
+        let (ago, date) = snapshot.when();
+        let summary = Span::from(snapshot.summary.clone());
+        let summary = if snapshot.summary.contains("deleted") {
+            summary.fg(Color::Yellow)
+        } else {
+            summary.dark_gray()
+        };
+        ListItem::new(Line::from(vec![
+            Span::from(format!("{ago:<12} ")).bold(),
+            Span::from(format!("{date:<17} ")).dark_gray(),
+            summary,
+        ]))
+    });
+    render_list(
+        frame,
+        area,
+        " snapshots, newest first: what changed since the one below ",
+        items,
+        Some(selected),
+    );
 }
 
 fn render_folders(frame: &mut Frame, project: &str, folders: &[FolderRow], selected: usize) {
@@ -211,7 +242,7 @@ fn folders(project: &crate::project::list::Row) -> String {
     project
         .folders
         .iter()
-        .map(|folder| folder.name.as_str())
+        .map(|folder| folder.label())
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -233,10 +264,30 @@ fn render_input(frame: &mut Frame, app: &App, purpose: &Input, value: &str) {
         }
     };
     let mut lines = vec![Line::from(format!("{value}_"))];
+    if !app.completions.is_empty() {
+        let shown: Vec<&str> = app
+            .completions
+            .iter()
+            .take(MAX_COMPLETIONS)
+            .map(String::as_str)
+            .collect();
+        let more = app.completions.len().saturating_sub(MAX_COMPLETIONS);
+        let mut text = shown.join("   ");
+        if more > 0 {
+            text.push_str(&format!("   … and {more} more"));
+        }
+        lines.push(Line::from(text).dark_gray());
+    }
     if let Some(error) = &app.input_error {
         lines.push(Line::from(error.as_str()).fg(Color::Red));
     }
-    let area = popup(frame.area(), 90, lines.len() as u16 + 2);
+    let width = INPUT_WIDTH.min(frame.area().width);
+    let inner = usize::from(width.saturating_sub(2)).max(1);
+    let rows: usize = lines
+        .iter()
+        .map(|line| line.width().max(1).div_ceil(inner))
+        .sum();
+    let area = popup(frame.area(), width, rows as u16 + 2);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(lines)
@@ -271,12 +322,30 @@ fn render_help(frame: &mut Frame) {
         Line::default(),
         Line::from("Your files").bold(),
         Line::from("  sai never deletes your local folders. The VPS copy of every project is"),
-        Line::from("  saved every 15 minutes, restore it with snapshots in the project menu."),
+        Line::from("  saved every 3 minutes, restore it with snapshots in the project menu."),
     ];
     let area = popup(frame.area(), 80, lines.len() as u16 + 2);
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(lines).block(Block::bordered().title(" help ")),
+        area,
+    );
+}
+
+fn render_ask_git(frame: &mut Frame, path: &str) {
+    let question = crate::attach::git_question(std::path::Path::new(path));
+    let width = INPUT_WIDTH.min(frame.area().width);
+    let inner = usize::from(width.saturating_sub(2)).max(1);
+    let area = popup(
+        frame.area(),
+        width,
+        question.chars().count().div_ceil(inner) as u16 + 2,
+    );
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(question)
+            .wrap(Wrap { trim: false })
+            .block(Block::bordered().title(" [y] yes   [n] no   [Esc] cancel ")),
         area,
     );
 }
@@ -374,10 +443,11 @@ fn footer_keys(mode: &Mode) -> &'static str {
     match mode {
         Mode::Browse => "[↑] [↓] move   [Enter] select   [?] help   [Esc] quit",
         Mode::Help => "any key: back",
+        Mode::AskGit { .. } => "[y] give the history   [n] attach without it   [Esc] cancel",
         Mode::ProjectMenu { .. } | Mode::Snapshots { .. } | Mode::Folders { .. } => {
             "[↑] [↓] move   [Enter] select   [Esc] back"
         }
-        Mode::Input { .. } => "[Enter] next   [Esc] cancel",
+        Mode::Input { .. } => "[Tab] complete   [Enter] next   [Esc] cancel",
         Mode::ChooseAgent { .. } => "[↑] [↓] move   [Enter] choose   [Esc] cancel",
         Mode::Confirm { .. } => "[y] confirm   [n] cancel",
         Mode::Running { result: None, .. } => "working, please wait…",

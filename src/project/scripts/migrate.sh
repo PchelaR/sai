@@ -25,7 +25,9 @@ case "$mode" in
     docker rm -f "$container" >/dev/null 2>&1 || true
     nest "$workspace"
     for stamp in "$snapshots"/*/; do
-      [ -d "$stamp" ] && nest "${stamp%/}"
+      if [ -d "$stamp" ]; then
+        nest "${stamp%/}"
+      fi
     done
     ;;
 esac

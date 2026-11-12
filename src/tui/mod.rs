@@ -1,5 +1,6 @@
 mod actions;
 mod app;
+mod complete;
 mod loader;
 mod menu;
 mod view;
