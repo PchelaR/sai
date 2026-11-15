@@ -16,15 +16,19 @@ pub struct FolderRow {
     pub path: String,
     pub sync: String,
     pub git: bool,
+    pub skipped: usize,
 }
 
 impl FolderRow {
     pub fn label(&self) -> String {
+        let mut label = self.name.clone();
         if self.git {
-            format!("{} · git", self.name)
-        } else {
-            self.name.clone()
+            label.push_str(" · git");
         }
+        if self.skipped > 0 {
+            label.push_str(&format!(" · {} skipped", self.skipped));
+        }
+        label
     }
 }
 
@@ -58,6 +62,7 @@ pub fn load() -> Result<Vec<Row>> {
                 path: folder.path.display().to_string(),
                 sync,
                 git: folder.git,
+                skipped: folder.skip.len(),
             });
         }
         rows.push(Row {
@@ -65,7 +70,9 @@ pub fn load() -> Result<Vec<Row>> {
             name: project.name.clone(),
             agent: project
                 .agent
-                .map_or_else(String::new, |agent| agent.to_string()),
+                .map(|agent| agent.to_string())
+                .or_else(|| project.retired_agent.clone())
+                .unwrap_or_default(),
             state: states
                 .get(project.name.as_str())
                 .unwrap_or(&NO_CONTAINER)
@@ -172,6 +179,7 @@ mod tests {
             path: String::new(),
             sync: sync.to_owned(),
             git: false,
+            skipped: 0,
         }
     }
 

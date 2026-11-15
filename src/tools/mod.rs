@@ -1,28 +1,22 @@
+mod policy;
+
 use anyhow::Result;
 use base64::{Engine, prelude::BASE64_STANDARD};
 
 use crate::agent::Agent;
 use crate::vps::USER;
-use crate::{ignores, remote, secrets};
+use crate::{ignores, secrets};
 
 const INSTALL: &str = include_str!("install.sh");
 const SNAPSHOTS: &str = include_str!("snapshots.sh");
 const SNAPSHOT_SERVICE: &str = include_str!("sai-snapshot.service");
 const SNAPSHOT_TIMER: &str = include_str!("sai-snapshot.timer");
-const CLAUDE_POLICY: &str = include_str!("claude-managed-settings.json");
-const CODEX_RULES: &str = include_str!("codex.rules");
-const KIMI_RULES: &str = include_str!("kimi-rules.toml");
-const KIMI_START: &str = include_str!("kimi-start.sh");
-const KIMI_GUARD: &str = include_str!("kimi-guard.sh");
 const TMUX: &str = include_str!("tmux.conf");
 const EXECUTABLE: &str = "755";
 const READABLE: &str = "644";
 
 const CLAUDE_POLICY_FILE: &str = "claude-managed-settings.json";
 const CODEX_RULES_FILE: &str = "codex.rules";
-const KIMI_RULES_FILE: &str = "kimi-rules.toml";
-const KIMI_START_FILE: &str = "kimi-start.sh";
-const KIMI_GUARD_FILE: &str = "kimi-guard.sh";
 const TMUX_FILE: &str = "tmux.conf";
 const TMUX_TARGET: &str = "/home/agent/.tmux.conf";
 const INSTRUCTIONS_FILE: &str = "instructions.md";
@@ -31,7 +25,12 @@ pub fn snapshots_path() -> String {
     file("bin/snapshots")
 }
 
-pub fn install(instructions: &str) -> Result<()> {
+pub use policy::Permissions;
+
+pub fn install_step(
+    instructions: &str,
+    permissions: &Permissions,
+) -> Result<(&'static str, Vec<String>)> {
     let units = format!("/home/{USER}/.config/systemd/user");
     let files = [
         (snapshots_path(), EXECUTABLE, SNAPSHOTS.to_owned()),
@@ -46,11 +45,8 @@ pub fn install(instructions: &str) -> Result<()> {
             READABLE,
             SNAPSHOT_TIMER.to_owned(),
         ),
-        (file(CLAUDE_POLICY_FILE), READABLE, CLAUDE_POLICY.to_owned()),
-        (file(CODEX_RULES_FILE), READABLE, CODEX_RULES.to_owned()),
-        (file(KIMI_RULES_FILE), READABLE, KIMI_RULES.to_owned()),
-        (file(KIMI_START_FILE), EXECUTABLE, KIMI_START.to_owned()),
-        (file(KIMI_GUARD_FILE), EXECUTABLE, KIMI_GUARD.to_owned()),
+        (file(CLAUDE_POLICY_FILE), READABLE, permissions.claude()?),
+        (file(CODEX_RULES_FILE), READABLE, permissions.codex()?),
         (file(TMUX_FILE), READABLE, TMUX.to_owned()),
         (file(INSTRUCTIONS_FILE), READABLE, instructions.to_owned()),
     ];
@@ -58,10 +54,7 @@ pub fn install(instructions: &str) -> Result<()> {
         .into_iter()
         .flat_map(|(path, mode, content)| [path, mode.to_owned(), BASE64_STANDARD.encode(content)])
         .collect();
-    remote::run(
-        INSTALL,
-        &args.iter().map(String::as_str).collect::<Vec<_>>(),
-    )
+    Ok((INSTALL, args))
 }
 
 pub fn read_only_mounts(agent: Agent) -> Vec<String> {
@@ -72,12 +65,6 @@ pub fn read_only_mounts(agent: Agent) -> Vec<String> {
         ],
         Agent::Codex => &[
             (CODEX_RULES_FILE, "/state/rules/sai.rules"),
-            (INSTRUCTIONS_FILE, "/state/AGENTS.md"),
-        ],
-        Agent::Kimi => &[
-            (KIMI_RULES_FILE, "/etc/sai/kimi-rules.toml"),
-            (KIMI_START_FILE, "/usr/local/bin/sai-kimi"),
-            (KIMI_GUARD_FILE, "/usr/local/bin/sai-kimi-guard"),
             (INSTRUCTIONS_FILE, "/state/AGENTS.md"),
         ],
     };
@@ -110,21 +97,14 @@ mod tests {
     fn mounts_only_the_agents_own_files() {
         let claude = read_only_mounts(Agent::Claude).join(" ");
         let codex = read_only_mounts(Agent::Codex).join(" ");
-        let kimi = read_only_mounts(Agent::Kimi).join(" ");
-        assert!(kimi.contains("/etc/sai/kimi-rules.toml"));
-        assert!(kimi.contains("/usr/local/bin/sai-kimi"));
-        assert!(kimi.contains("/usr/local/bin/sai-kimi-guard"));
-        assert!(kimi.contains("/state/AGENTS.md"));
-        for mounts in [&claude, &codex, &kimi] {
-            assert!(mounts.contains("/home/agent/.tmux.conf"));
-        }
-        assert!(!kimi.contains("claude") && !kimi.contains("codex"));
         assert!(claude.contains("/etc/claude-code/managed-settings.json"));
         assert!(claude.contains("/state/CLAUDE.md"));
-        assert!(!claude.contains("codex") && !claude.contains("kimi"));
+        assert!(!claude.contains("codex"));
         assert!(codex.contains("/state/rules/sai.rules"));
         assert!(codex.contains("/state/AGENTS.md"));
         assert!(!codex.contains("claude"));
-        assert!(!codex.contains("kimi"));
+        for mounts in [&claude, &codex] {
+            assert!(mounts.contains("/home/agent/.tmux.conf"));
+        }
     }
 }

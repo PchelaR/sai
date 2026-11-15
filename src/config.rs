@@ -5,6 +5,7 @@ use etcetera::BaseStrategy;
 use serde::Deserialize;
 
 use crate::files;
+use crate::tools::Permissions;
 use crate::vps::SSH_PORT;
 
 const CONFIG_FILE: &str = "config.toml";
@@ -17,6 +18,8 @@ pub struct Config {
     ssh_key: String,
     pub ip: String,
     port: Option<u16>,
+    #[serde(default)]
+    pub agents: Permissions,
 }
 
 impl Config {
@@ -28,12 +31,18 @@ impl Config {
                 path.display()
             )
         })?;
-        toml::from_str(content.trim_start_matches('\u{feff}')).with_context(|| {
-            format!(
-                "invalid config at {}, write Windows paths with / or in single quotes",
-                path.display()
-            )
-        })
+        let config: Self =
+            toml::from_str(content.trim_start_matches('\u{feff}')).with_context(|| {
+                format!(
+                    "invalid config at {}, write Windows paths with / or in single quotes",
+                    path.display()
+                )
+            })?;
+        config
+            .agents
+            .validate()
+            .with_context(|| format!("invalid config at {}", path.display()))?;
+        Ok(config)
     }
 
     pub fn port(&self) -> u16 {

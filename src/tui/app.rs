@@ -1,13 +1,16 @@
-use std::env;
-
 use clap::ValueEnum;
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
+
+use ratatui::crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 
 use super::actions::{Action, Progress, Session, Task};
+use super::explorer::{Explorer, Step};
 use super::loader::Loaded;
 use super::menu::{General, ProjectItem};
 use crate::agent::Agent;
-use crate::project::list::{FolderRow, Row};
+use crate::project::folders::Plan;
+use crate::project::list::Row;
 use crate::snapshot::Snapshot;
 use crate::{project, snapshot};
 
@@ -19,7 +22,6 @@ pub enum Outcome {
 
 pub enum Input {
     Project,
-    Folder { project: String },
     Rename { project: String },
     RestorePath { project: String, snapshot: String },
     ResetConfirmation,
@@ -27,7 +29,7 @@ pub enum Input {
 }
 
 pub enum AgentChoice {
-    Attach { project: String, path: String },
+    Attach { project: String },
     Change { project: String },
 }
 
@@ -46,26 +48,31 @@ pub enum Mode {
         selected: usize,
         purpose: AgentChoice,
     },
+    LoadingSnapshots {
+        project: String,
+        receiver: Receiver<Result<Vec<Snapshot>, String>>,
+    },
     Snapshots {
         project: String,
         snapshots: Vec<Snapshot>,
         selected: usize,
     },
-    Folders {
-        project: String,
-        folders: Vec<FolderRow>,
-        selected: usize,
+    Explorer {
+        explorer: Box<Explorer>,
+        agent: Option<Agent>,
+    },
+    Apply {
+        explorer: Box<Explorer>,
+        agent: Option<Agent>,
+        plan: Plan,
+        question: String,
+        asks_git: bool,
     },
     Confirm {
         question: String,
         action: Action,
     },
     Help,
-    AskGit {
-        project: String,
-        path: String,
-        agent: Option<Agent>,
-    },
     Running {
         title: String,
         log: Vec<String>,
@@ -115,6 +122,39 @@ impl App {
         }
     }
 
+    pub fn mouse(&mut self, event: MouseEvent) {
+        if let Mode::Explorer { explorer, .. } = &mut self.mode {
+            explorer.mouse(event);
+        }
+    }
+
+    pub fn tick(&mut self) -> bool {
+        match &mut self.mode {
+            Mode::Explorer { explorer, .. } => explorer.tick(),
+            Mode::LoadingSnapshots { project, receiver } => {
+                let Ok(result) = receiver.try_recv() else {
+                    return false;
+                };
+                let project = std::mem::take(project);
+                match result {
+                    Ok(snapshots) => {
+                        self.mode = Mode::Snapshots {
+                            project,
+                            snapshots,
+                            selected: 0,
+                        }
+                    }
+                    Err(error) => {
+                        self.mode = Mode::Browse;
+                        self.error = Some(error);
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub fn projects(&self) -> &[Row] {
         self.loaded.as_ref().map_or(&[], |loaded| &loaded.projects)
     }
@@ -133,16 +173,25 @@ impl App {
             Mode::ProjectMenu { selected } => self.project_menu(selected, key),
             Mode::Input { purpose, value } => self.input(purpose, value, key),
             Mode::ChooseAgent { selected, purpose } => self.choose_agent(selected, purpose, key),
+            Mode::LoadingSnapshots { project, receiver } => {
+                if key.code != KeyCode::Esc {
+                    self.mode = Mode::LoadingSnapshots { project, receiver };
+                }
+                None
+            }
             Mode::Snapshots {
                 project,
                 snapshots,
                 selected,
             } => self.snapshots(project, snapshots, selected, key),
-            Mode::Folders {
-                project,
-                folders,
-                selected,
-            } => self.folders(project, folders, selected, key),
+            Mode::Explorer { explorer, agent } => self.explore(explorer, agent, key),
+            Mode::Apply {
+                explorer,
+                agent,
+                plan,
+                question,
+                asks_git,
+            } => self.apply(explorer, agent, plan, question, asks_git, key),
             Mode::Confirm { question, action } => match key.code {
                 KeyCode::Char('y') => Some(Outcome::Run(action)),
                 KeyCode::Char('n') | KeyCode::Esc => None,
@@ -152,23 +201,6 @@ impl App {
                 }
             },
             Mode::Help => None,
-            Mode::AskGit {
-                project,
-                path,
-                agent,
-            } => match key.code {
-                KeyCode::Char('y') => self.finish_attach(project, path, agent, true),
-                KeyCode::Char('n') => self.finish_attach(project, path, agent, false),
-                KeyCode::Esc => None,
-                _ => {
-                    self.mode = Mode::AskGit {
-                        project,
-                        path,
-                        agent,
-                    };
-                    None
-                }
-            },
             Mode::Running { title, log, result } => {
                 let finished = result.is_some();
                 if finished && matches!(key.code, KeyCode::Enter | KeyCode::Esc) {
@@ -197,7 +229,7 @@ impl App {
             KeyCode::Enter => match self.selected_general() {
                 Some(index) => self.general(General::ALL[index]),
                 None if self.selected_project()?.only_on_vps => {
-                    self.project_item(ProjectItem::Attach)
+                    self.project_item(ProjectItem::Folders)
                 }
                 None => {
                     self.mode = Mode::ProjectMenu { selected: 0 };
@@ -230,7 +262,9 @@ impl App {
                 let suggested = self.suggested_project();
                 self.ask(Input::Project, suggested)
             }
+            General::Vps => open(Session::Vps),
             General::Update => run(Task::Update),
+            General::Upgrade => run(Task::Upgrade),
             General::Doctor => run(Task::Doctor),
             General::Logs => run(Task::Logs),
             General::Reset => self.ask(Input::ResetConfirmation, String::new()),
@@ -261,7 +295,7 @@ impl App {
     fn project_item(&mut self, item: ProjectItem) -> Option<Outcome> {
         let project = self.selected_project()?;
         let name = project.name.clone();
-        if project.only_on_vps && !matches!(item, ProjectItem::Attach | ProjectItem::Purge) {
+        if project.only_on_vps && !matches!(item, ProjectItem::Folders | ProjectItem::Purge) {
             self.error = Some(format!(
                 "{name} is only on the VPS. Press Enter to attach a folder to it, or D to delete its files"
             ));
@@ -271,19 +305,17 @@ impl App {
             ProjectItem::Chat => open(Session::Chat(name)),
             ProjectItem::Shell => open(Session::Shell(name)),
             ProjectItem::Stop => run(Task::Stop(name)),
-            ProjectItem::Attach => self.ask(Input::Folder { project: name }, current_dir()),
+            ProjectItem::Folders if project.only_on_vps => {
+                self.mode = Mode::ChooseAgent {
+                    selected: 0,
+                    purpose: AgentChoice::Attach { project: name },
+                };
+                None
+            }
+            ProjectItem::Folders => self.explorer(name, None),
             ProjectItem::Rename => {
                 let value = name.clone();
                 self.ask(Input::Rename { project: name }, value)
-            }
-            ProjectItem::Detach => {
-                let folders = project.folders.to_vec();
-                self.mode = Mode::Folders {
-                    project: name,
-                    folders,
-                    selected: 0,
-                };
-                None
             }
             ProjectItem::Change => {
                 self.mode = Mode::ChooseAgent {
@@ -293,16 +325,17 @@ impl App {
                 None
             }
             ProjectItem::Snapshots => {
-                match snapshot::snapshots(&name) {
-                    Ok(snapshots) => {
-                        self.mode = Mode::Snapshots {
-                            project: name,
-                            snapshots,
-                            selected: 0,
-                        }
-                    }
-                    Err(error) => self.error = Some(format!("{error:#}")),
-                }
+                let (sender, receiver) = mpsc::channel();
+                let project = name.clone();
+                thread::spawn(move || {
+                    sender
+                        .send(snapshot::snapshots(&project).map_err(|error| format!("{error:#}")))
+                        .ok();
+                });
+                self.mode = Mode::LoadingSnapshots {
+                    project: name,
+                    receiver,
+                };
                 None
             }
             ProjectItem::Remove => self.confirm(
@@ -320,9 +353,6 @@ impl App {
         match key.code {
             KeyCode::Tab => {
                 let completion = match &purpose {
-                    Input::Folder { .. } => {
-                        super::complete::folder(&value, etcetera::home_dir().ok().as_deref())
-                    }
                     Input::Project => {
                         let names: Vec<&str> = self
                             .projects()
@@ -354,33 +384,28 @@ impl App {
     fn submit(&mut self, purpose: Input, value: String) -> Option<Outcome> {
         match purpose {
             Input::Project => {
-                if let Err(error) = project::validate_name(&value) {
-                    return self.ask_again(Input::Project, value, error);
-                }
-                self.ask(Input::Folder { project: value }, current_dir())
-            }
-            Input::Folder { project } => {
-                let path = expand_home(&value);
-                if let Err(error) = project::local_path(&path) {
-                    return self.ask_again(Input::Folder { project }, value, error);
-                }
+                let value = match project::name_from(&value) {
+                    Ok(name) => name,
+                    Err(error) => return self.ask_again(Input::Project, value, error),
+                };
                 if self
                     .projects()
                     .iter()
-                    .any(|row| row.name == project && !row.only_on_vps)
+                    .any(|row| row.name == value && !row.only_on_vps)
                 {
-                    return self.attach(project, path, None);
+                    return self.explorer(value, None);
                 }
                 self.mode = Mode::ChooseAgent {
                     selected: 0,
-                    purpose: AgentChoice::Attach { project, path },
+                    purpose: AgentChoice::Attach { project: value },
                 };
                 None
             }
             Input::Rename { project } => {
-                if let Err(error) = project::validate_name(&value) {
-                    return self.ask_again(Input::Rename { project }, value, error);
-                }
+                let value = match project::name_from(&value) {
+                    Ok(name) => name,
+                    Err(error) => return self.ask_again(Input::Rename { project }, value, error),
+                };
                 if value == project {
                     return None;
                 }
@@ -434,9 +459,7 @@ impl App {
             KeyCode::Enter => {
                 let agent = agents[selected];
                 return match purpose {
-                    AgentChoice::Attach { project, path } => {
-                        self.attach(project, path, Some(agent))
-                    }
+                    AgentChoice::Attach { project } => self.explorer(project, Some(agent)),
                     AgentChoice::Change { project } => run(Task::Change(project, agent)),
                 };
             }
@@ -475,93 +498,82 @@ impl App {
         None
     }
 
-    fn folders(
-        &mut self,
-        project: String,
-        folders: Vec<FolderRow>,
-        selected: usize,
-        key: KeyEvent,
-    ) -> Option<Outcome> {
-        let last = folders.len().saturating_sub(1);
-        let selected = match key.code {
-            KeyCode::Enter => {
-                let folder = folders.get(selected)?;
-                let question = format!(
-                    "Detach {} from {project}? Local files stay, the VPS copy is removed",
-                    folder.path
-                );
-                let path = folder.path.clone();
-                return self.confirm(question, Action::Run(Task::Detach { project, path }));
-            }
-            KeyCode::Esc => return None,
-            KeyCode::Down | KeyCode::Char('j') => (selected + 1).min(last),
-            KeyCode::Up | KeyCode::Char('k') => selected.saturating_sub(1),
-            _ => selected,
-        };
-        self.mode = Mode::Folders {
-            project,
-            folders,
-            selected,
+    fn explorer(&mut self, project: String, agent: Option<Agent>) -> Option<Outcome> {
+        self.mode = Mode::Explorer {
+            explorer: Box::new(Explorer::open(&project)),
+            agent,
         };
         None
     }
 
-    fn attach(&mut self, project: String, path: String, agent: Option<Agent>) -> Option<Outcome> {
-        let local = std::path::PathBuf::from(&path);
-        if let Err(error) = project::ensure_attachable(&local) {
-            self.error = Some(format!("{error:#}"));
-            return None;
+    fn explore(
+        &mut self,
+        mut explorer: Box<Explorer>,
+        agent: Option<Agent>,
+        key: KeyEvent,
+    ) -> Option<Outcome> {
+        match explorer.key(key.code) {
+            Step::Cancel => None,
+            Step::Continue => {
+                self.mode = Mode::Explorer { explorer, agent };
+                None
+            }
+            Step::Apply(plan) if plan.is_empty() => None,
+            Step::Apply(plan) => {
+                let repositories = explorer.new_repositories(&plan);
+                let asks_git = !repositories.is_empty();
+                let mut question = plan.summary();
+                if asks_git {
+                    question.push(' ');
+                    question.push_str(&crate::attach::git_question_many(&repositories));
+                } else {
+                    question.push_str(" Apply?");
+                }
+                self.mode = Mode::Apply {
+                    explorer,
+                    agent,
+                    plan,
+                    question,
+                    asks_git,
+                };
+                None
+            }
         }
-        let canonical = project::local_path(&path).unwrap_or_else(|_| local.clone());
-        let has_git = self
-            .projects()
-            .iter()
-            .filter(|row| row.name == project)
-            .flat_map(|row| &row.folders)
-            .any(|folder| {
-                folder.git && project::same_path(std::path::Path::new(&folder.path), &canonical)
-            });
-        if !has_git && project::is_git_repo(&canonical) {
-            self.mode = Mode::AskGit {
-                project,
-                path,
-                agent,
-            };
-            return None;
-        }
-        self.finish_attach(project, path, agent, false)
     }
 
-    fn finish_attach(
+    fn apply(
         &mut self,
-        project: String,
-        path: String,
+        explorer: Box<Explorer>,
         agent: Option<Agent>,
-        git: bool,
+        plan: Plan,
+        question: String,
+        asks_git: bool,
+        key: KeyEvent,
     ) -> Option<Outcome> {
-        let local = std::path::PathBuf::from(&path);
-        if project::size::exceeds_large(&local).is_none() {
-            return run(Task::Attach {
-                project,
-                path,
-                agent,
-                large: false,
-                git,
-            });
-        }
-        self.confirm(
-            format!(
-                "{} has more than 1 GB of files to upload to the VPS. Attach it anyway?",
-                local.display()
-            ),
-            Action::Run(Task::Attach {
-                project,
-                path,
-                agent,
-                large: true,
-                git,
-            }),
-        )
+        let git = match (key.code, asks_git) {
+            (KeyCode::Char('y'), _) => asks_git,
+            (KeyCode::Char('n'), true) => false,
+            (KeyCode::Char('n') | KeyCode::Esc, _) => {
+                self.mode = Mode::Explorer { explorer, agent };
+                return None;
+            }
+            _ => {
+                self.mode = Mode::Apply {
+                    explorer,
+                    agent,
+                    plan,
+                    question,
+                    asks_git,
+                };
+                return None;
+            }
+        };
+        run(Task::Folders {
+            project: explorer.project.clone(),
+            agent,
+            plan,
+            git,
+        })
     }
 
     fn suggested_project(&self) -> String {
@@ -611,13 +623,7 @@ fn open(session: Session) -> Option<Outcome> {
     Some(Outcome::Run(Action::Open(session)))
 }
 
-fn current_dir() -> String {
-    env::current_dir()
-        .map(|dir| dir.display().to_string())
-        .unwrap_or_default()
-}
-
-fn expand_home(input: &str) -> String {
+pub fn expand_home(input: &str) -> String {
     let relative = input
         .strip_prefix("~/")
         .or_else(|| input.strip_prefix("~\\"));

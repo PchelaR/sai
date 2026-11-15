@@ -26,6 +26,7 @@ mod status;
 mod tools;
 mod tui;
 mod update;
+mod upgrade;
 mod vps;
 
 use std::env;
@@ -62,6 +63,7 @@ enum Command {
     Shell {
         project: Option<String>,
     },
+    Vps,
     Change {
         #[arg(value_enum)]
         agent: Agent,
@@ -69,6 +71,10 @@ enum Command {
     },
     Resolve {
         project: Option<String>,
+    },
+    Files {
+        project: Option<String>,
+        folder: Option<String>,
     },
     Snapshots {
         project: Option<String>,
@@ -84,6 +90,7 @@ enum Command {
     Doctor,
     Logs,
     Update,
+    Upgrade,
     Reset {
         #[arg(long)]
         all: bool,
@@ -132,32 +139,41 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     if !matches!(cli.command, Some(Command::Completions { .. })) {
         completions::install_quietly(Cli::command());
     }
+    upgrade::clean_up();
     let Some(command) = cli.command else {
         return tui::run();
     };
+    let remind = !matches!(command, Command::Upgrade | Command::Completions { .. });
 
-    match command {
+    let result = match command {
         Command::Setup { minimal } => setup::run(minimal).await,
         Command::Attach {
             project,
             dir_path,
             agent,
             alias,
-        } => attach::run(
-            &project,
-            &dir_path,
-            agent,
-            alias.as_deref(),
-            &attach::ask_large,
-            &attach::ask_git,
-        ),
+        } => {
+            let alias = alias.as_deref().map(project::name_from).transpose()?;
+            attach::run(
+                &project::name_from(&project)?,
+                &dir_path,
+                agent,
+                alias.as_deref(),
+                &attach::ask_new_items,
+                &attach::ask_git,
+            )
+        }
         Command::Detach { project, dir_path } => {
             project::detach::run_with_confirmation(&project, &dir_path)
         }
         Command::Chat { project, agent } => chat::run(project.as_deref(), agent),
         Command::Shell { project } => shell::run(project.as_deref()),
+        Command::Vps => shell::vps(),
         Command::Change { agent, project } => project::change::run(project.as_deref(), agent),
         Command::Resolve { project } => resolve::run(project.as_deref()),
+        Command::Files { project, folder } => {
+            project::files::run(project.as_deref(), folder.as_deref())
+        }
         Command::Snapshots { project } => snapshot::list(project.as_deref()),
         Command::Restore {
             snapshot,
@@ -169,10 +185,17 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Doctor => doctor::run(),
         Command::Logs => logs::report(),
         Command::Update => update::run(),
+        Command::Upgrade => upgrade::run(),
         Command::Reset { all } => reset::run(all),
         Command::Stop { project } => project::stop::run(project.as_deref()),
-        Command::Rename { project, new_name } => project::rename::run(&project, &new_name),
+        Command::Rename { project, new_name } => {
+            project::rename::run(&project, &project::name_from(&new_name)?)
+        }
         Command::Rm { project, purge } => project::remove::run_with_confirmation(&project, purge),
         Command::Completions { shell } => completions::print(shell, Cli::command()),
+    };
+    if remind {
+        upgrade::notice();
     }
+    result
 }

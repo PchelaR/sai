@@ -1,7 +1,9 @@
 #[derive(Clone, Copy)]
 pub enum General {
     Attach,
+    Vps,
     Update,
+    Upgrade,
     Doctor,
     Logs,
     Reset,
@@ -10,9 +12,11 @@ pub enum General {
 }
 
 impl General {
-    pub const ALL: [General; 7] = [
+    pub const ALL: [General; 9] = [
         General::Attach,
+        General::Vps,
         General::Update,
+        General::Upgrade,
         General::Doctor,
         General::Logs,
         General::Reset,
@@ -23,7 +27,9 @@ impl General {
     pub fn command(self) -> &'static str {
         match self {
             General::Attach => "attach",
+            General::Vps => "vps",
             General::Update => "update",
+            General::Upgrade => "upgrade",
             General::Doctor => "doctor",
             General::Logs => "logs",
             General::Reset => "reset",
@@ -35,7 +41,9 @@ impl General {
     pub fn description(self) -> &'static str {
         match self {
             General::Attach => "Add a folder to a project",
+            General::Vps => "Shell on the VPS",
             General::Update => "Rebuild images",
+            General::Upgrade => "Install the latest sai",
             General::Doctor => "Check everything",
             General::Logs => "Save a report with logs",
             General::Reset => "Delete everything on the VPS",
@@ -47,7 +55,9 @@ impl General {
     pub fn key(self) -> char {
         match self {
             General::Attach => 'a',
+            General::Vps => 'v',
             General::Update => 'u',
+            General::Upgrade => 'U',
             General::Doctor => 'g',
             General::Logs => 'l',
             General::Reset => 'R',
@@ -61,8 +71,7 @@ impl General {
 pub enum ProjectItem {
     Chat,
     Shell,
-    Attach,
-    Detach,
+    Folders,
     Change,
     Snapshots,
     Rename,
@@ -72,11 +81,10 @@ pub enum ProjectItem {
 }
 
 impl ProjectItem {
-    pub const ALL: [ProjectItem; 10] = [
+    pub const ALL: [ProjectItem; 9] = [
         ProjectItem::Chat,
         ProjectItem::Shell,
-        ProjectItem::Attach,
-        ProjectItem::Detach,
+        ProjectItem::Folders,
         ProjectItem::Change,
         ProjectItem::Snapshots,
         ProjectItem::Rename,
@@ -89,8 +97,7 @@ impl ProjectItem {
         match self {
             ProjectItem::Chat => "chat",
             ProjectItem::Shell => "shell",
-            ProjectItem::Attach => "attach",
-            ProjectItem::Detach => "detach",
+            ProjectItem::Folders => "folders",
             ProjectItem::Change => "change",
             ProjectItem::Snapshots => "snapshots",
             ProjectItem::Rename => "rename",
@@ -104,8 +111,7 @@ impl ProjectItem {
         match self {
             ProjectItem::Chat => "Open the agent",
             ProjectItem::Shell => "Bash in the container",
-            ProjectItem::Attach => "Add a folder",
-            ProjectItem::Detach => "Remove a folder",
+            ProjectItem::Folders => "Choose folders and what to upload",
             ProjectItem::Change => "Switch to another agent",
             ProjectItem::Snapshots => "List and restore",
             ProjectItem::Rename => "Give the project another name",
@@ -119,8 +125,7 @@ impl ProjectItem {
         match self {
             ProjectItem::Chat => 'o',
             ProjectItem::Shell => 's',
-            ProjectItem::Attach => 'f',
-            ProjectItem::Detach => 't',
+            ProjectItem::Folders => 'f',
             ProjectItem::Change => 'c',
             ProjectItem::Snapshots => 'p',
             ProjectItem::Rename => 'n',

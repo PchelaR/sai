@@ -33,7 +33,7 @@ pub fn run(name: &str, dir_path: &str) -> Result<()> {
     detach(&mut registry, &project, &folder)
 }
 
-fn find(project: &Project, dir_path: &str) -> Result<Folder> {
+pub fn find(project: &Project, dir_path: &str) -> Result<Folder> {
     let path = local_path(dir_path).unwrap_or_else(|_| PathBuf::from(dir_path));
     project
         .folders
@@ -59,7 +59,9 @@ fn detach(registry: &mut Registry, project: &Project, folder: &Folder) -> Result
     let name = project.name.as_str();
     let target = project.target(folder);
     mutagen::finish(&target.id)?;
-    mutagen::drop_if_present(&project.git_target(folder).id)?;
+    for id in project.git_session_ids(folder)? {
+        mutagen::drop_if_present(&id)?;
+    }
     snapshot::take(name)?;
     remote::run(DETACH, &[&target.remote])?;
     registry.remove_folder(name, &folder.path)?;

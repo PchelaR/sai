@@ -8,9 +8,10 @@ use ratatui::widgets::{
 };
 
 use super::app::{AgentChoice, App, Input, Mode};
+use super::explorer::{Arrow, Explorer, Mark};
 use super::menu::{General, ProjectItem};
 use crate::agent::Agent;
-use crate::project::list::FolderRow;
+use crate::project::size::human;
 use crate::snapshot::Snapshot;
 
 const COMMAND_WIDTH: usize = 12;
@@ -18,6 +19,9 @@ const DESCRIPTION_WIDTH: usize = 36;
 const HIGHLIGHT: &str = "› ";
 const MAX_COMPLETIONS: usize = 30;
 const INPUT_WIDTH: u16 = 90;
+const LARGE_ITEM: u64 = 100 * 1024 * 1024;
+const CLOSED: &str = if cfg!(windows) { "►" } else { "▸" };
+const OPEN: &str = if cfg!(windows) { "▼" } else { "▾" };
 
 pub fn render(frame: &mut Frame, app: &App) {
     let [header, projects, general, footer] = Layout::vertical([
@@ -38,28 +42,53 @@ pub fn render(frame: &mut Frame, app: &App) {
         Mode::ProjectMenu { selected } => render_project_menu(frame, app, *selected),
         Mode::Input { purpose, value } => render_input(frame, app, purpose, value),
         Mode::ChooseAgent { selected, purpose } => render_agents(frame, *selected, purpose),
+        Mode::LoadingSnapshots { project, .. } => {
+            let area = popup(frame.area(), 60, 3);
+            frame.render_widget(Clear, area);
+            frame.render_widget(
+                Paragraph::new(format!("Loading the snapshots of {project}…"))
+                    .block(Block::bordered().title(" snapshots ")),
+                area,
+            );
+        }
         Mode::Snapshots {
             snapshots,
             selected,
             ..
         } => render_snapshots(frame, snapshots, *selected),
-        Mode::Folders {
-            project,
-            folders,
-            selected,
-        } => render_folders(frame, project, folders, *selected),
+        Mode::Explorer { explorer, .. } => render_explorer(frame, explorer),
+        Mode::Apply {
+            explorer,
+            question,
+            asks_git,
+            ..
+        } => {
+            render_explorer(frame, explorer);
+            let title = if *asks_git {
+                " [y] yes, with history   [n] without history   [Esc] back "
+            } else {
+                " [y] apply   [n] back "
+            };
+            render_question(frame, question, title);
+        }
         Mode::Confirm { question, .. } => render_confirm(frame, question),
         Mode::Help => render_help(frame),
-        Mode::AskGit { path, .. } => render_ask_git(frame, path),
         Mode::Running { title, log, result } => render_running(frame, title, log, result.as_ref()),
     }
 }
 
 fn render_header(frame: &mut Frame, app: &App, area: Rect) {
-    let title = if app.loading {
-        " sai · loading… "
-    } else {
-        " sai "
+    let latest = app
+        .loaded
+        .as_ref()
+        .and_then(|loaded| loaded.latest.as_deref());
+    let title = match (app.loading, latest) {
+        (true, _) => Line::from(" sai · loading… "),
+        (false, Some(version)) => {
+            Line::from(format!(" sai · {version} is available, press U to update "))
+                .fg(Color::Yellow)
+        }
+        (false, None) => Line::from(" sai "),
     };
     let line = match (&app.error, &app.loaded) {
         (Some(_), None) => Line::from("Cannot load the projects, see below").fg(Color::Red),
@@ -88,7 +117,7 @@ fn render_projects(frame: &mut Frame, app: &App, area: Rect) {
             "Is the VPS on and set up? Set it up once with `sai setup` in a terminal.",
         ));
         lines.push(Line::from(
-            "Choose doctor below to see what exactly is wrong, then refresh.",
+            "Choose doctor below to see what exactly is wrong. sai tries again every 15 seconds.",
         ));
         frame.render_widget(
             Paragraph::new(lines)
@@ -217,25 +246,83 @@ fn render_snapshots(frame: &mut Frame, snapshots: &[Snapshot], selected: usize) 
     );
 }
 
-fn render_folders(frame: &mut Frame, project: &str, folders: &[FolderRow], selected: usize) {
-    let height = (folders.len().max(1) as u16 + 2).min(20);
-    let area = popup(frame.area(), 80, height);
+fn render_explorer(frame: &mut Frame, explorer: &Explorer) {
+    let full = frame.area();
+    let area = popup(
+        full,
+        full.width.saturating_sub(4),
+        full.height.saturating_sub(2),
+    );
     frame.render_widget(Clear, area);
-    let title = format!(" detach a folder from {project} ");
-    if folders.is_empty() {
-        frame.render_widget(
-            Paragraph::new("No folders attached").block(Block::bordered().title(title)),
-            area,
-        );
-        return;
-    }
-    let items = folders.iter().map(|folder| {
-        ListItem::new(Line::from(vec![
-            Span::from(format!("{:<16}", folder.name)).bold(),
-            Span::from(folder.path.clone()).dark_gray(),
-        ]))
+    let [list, bottom] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
+    let title = format!(" {}: folders on this computer ", explorer.project);
+    let uploads = format!(" uploads {} ", human(explorer.uploaded()));
+    let items = explorer.rows().into_iter().map(|row| {
+        let mark = match row.mark {
+            Mark::On => "[x]",
+            Mark::Partial => "[~]",
+            Mark::Off => "[ ]",
+            Mark::Ignored => "[-]",
+        };
+        let arrow = match row.arrow {
+            Arrow::None => " ",
+            Arrow::Closed => CLOSED,
+            Arrow::Open => OPEN,
+        };
+        let mut spans = vec![
+            Span::from(format!("{}{arrow} {mark} ", "  ".repeat(row.depth))),
+            Span::from(row.name),
+        ];
+        if !row.note.is_empty() {
+            spans.push(Span::from(format!("  {}", row.note)).dark_gray());
+        }
+        if row.measuring {
+            spans.push(Span::from("  measuring…").dark_gray());
+        } else if let Some(size) = row.size {
+            let text = match row.total {
+                Some(total) if total != size => format!("  {} of {}", human(size), human(total)),
+                _ => format!("  {}", human(size)),
+            };
+            let span = Span::from(text);
+            spans.push(if size >= LARGE_ITEM {
+                span.fg(Color::Yellow)
+            } else {
+                span.dark_gray()
+            });
+        }
+        let line = Line::from(spans);
+        if matches!(row.mark, Mark::Off | Mark::Ignored) {
+            ListItem::new(line.dark_gray())
+        } else {
+            ListItem::new(line)
+        }
     });
-    render_list(frame, area, &title, items, Some(selected));
+    let block = Block::bordered()
+        .title(title)
+        .title(Line::from(uploads).right_aligned());
+    let list_widget = List::new(items)
+        .block(block)
+        .highlight_style(Style::new().reversed())
+        .highlight_symbol(HIGHLIGHT);
+    let mut state = ListState::default()
+        .with_offset(explorer.offset.get())
+        .with_selected(Some(explorer.cursor));
+    frame.render_stateful_widget(list_widget, list, &mut state);
+    explorer.offset.set(state.offset());
+    explorer.area.set(list);
+    let line = match (&explorer.typing, &explorer.message) {
+        (Some(value), _) => {
+            let mut text = format!(" path: {value}_");
+            if !explorer.completions.is_empty() {
+                text.push_str(&format!("   {}", explorer.completions.join("   ")));
+            }
+            Line::from(text)
+        }
+        (None, Some(message)) => Line::from(format!(" {message}")).fg(Color::Red),
+        (None, None) => Line::default(),
+    };
+    frame.render_widget(Clear, bottom);
+    frame.render_widget(line, bottom);
 }
 
 fn folders(project: &crate::project::list::Row) -> String {
@@ -250,7 +337,6 @@ fn folders(project: &crate::project::list::Row) -> String {
 fn render_input(frame: &mut Frame, app: &App, purpose: &Input, value: &str) {
     let title = match purpose {
         Input::Project => " project name, new or existing ".to_owned(),
-        Input::Folder { project } => format!(" folder to attach to {project} "),
         Input::Rename { project } => format!(" new name for {project} "),
         Input::RestorePath { .. } => {
             " path like front/src/app.ts, empty for the whole project ".to_owned()
@@ -285,7 +371,14 @@ fn render_input(frame: &mut Frame, app: &App, purpose: &Input, value: &str) {
     let inner = usize::from(width.saturating_sub(2)).max(1);
     let rows: usize = lines
         .iter()
-        .map(|line| line.width().max(1).div_ceil(inner))
+        .map(|line| {
+            let text: String = line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            wrapped_lines(&text, inner)
+        })
         .sum();
     let area = popup(frame.area(), width, rows as u16 + 2);
     frame.render_widget(Clear, area);
@@ -332,31 +425,43 @@ fn render_help(frame: &mut Frame) {
     );
 }
 
-fn render_ask_git(frame: &mut Frame, path: &str) {
-    let question = crate::attach::git_question(std::path::Path::new(path));
+fn render_confirm(frame: &mut Frame, question: &str) {
+    render_question(frame, question, " [y] yes   [n] no ");
+}
+
+fn render_question(frame: &mut Frame, question: &str, title: &str) {
     let width = INPUT_WIDTH.min(frame.area().width);
     let inner = usize::from(width.saturating_sub(2)).max(1);
-    let area = popup(
-        frame.area(),
-        width,
-        question.chars().count().div_ceil(inner) as u16 + 2,
-    );
+    let height = u16::try_from(wrapped_lines(question, inner)).unwrap_or(u16::MAX);
+    let area = popup(frame.area(), width, height.saturating_add(2));
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(question)
-            .wrap(Wrap { trim: false })
-            .block(Block::bordered().title(" [y] yes   [n] no   [Esc] cancel ")),
+        Paragraph::new(question.to_owned())
+            .wrap(Wrap { trim: true })
+            .block(Block::bordered().title(title.to_owned())),
         area,
     );
 }
 
-fn render_confirm(frame: &mut Frame, question: &str) {
-    let area = popup(frame.area(), 70, 3);
-    frame.render_widget(Clear, area);
-    frame.render_widget(
-        Paragraph::new(question).block(Block::bordered().title(" [y] yes   [n] no ")),
-        area,
-    );
+fn wrapped_lines(text: &str, width: usize) -> usize {
+    text.lines()
+        .map(|line| {
+            let mut lines = 1;
+            let mut used = 0;
+            for word in line.split_whitespace() {
+                let length = word.chars().count();
+                let needed = if used == 0 { length } else { used + 1 + length };
+                if needed <= width {
+                    used = needed;
+                } else {
+                    lines += length.saturating_sub(1) / width + usize::from(used > 0);
+                    used = (length - 1) % width + 1;
+                }
+            }
+            lines
+        })
+        .sum::<usize>()
+        .max(1)
 }
 
 fn render_running(
@@ -427,7 +532,11 @@ fn render_list<'a>(
         .block(Block::bordered().title(title.to_owned()))
         .highlight_style(Style::new().reversed())
         .highlight_symbol(HIGHLIGHT);
-    let mut state = ListState::default().with_selected(selected);
+    let visible = usize::from(area.height.saturating_sub(2)).max(1);
+    let offset = selected.map_or(0, |selected| selected / visible * visible);
+    let mut state = ListState::default()
+        .with_offset(offset)
+        .with_selected(selected);
     frame.render_stateful_widget(list, area, &mut state);
 }
 
@@ -443,11 +552,18 @@ fn footer_keys(mode: &Mode) -> &'static str {
     match mode {
         Mode::Browse => "[↑] [↓] move   [Enter] select   [?] help   [Esc] quit",
         Mode::Help => "any key: back",
-        Mode::AskGit { .. } => "[y] give the history   [n] attach without it   [Esc] cancel",
-        Mode::ProjectMenu { .. } | Mode::Snapshots { .. } | Mode::Folders { .. } => {
+        Mode::LoadingSnapshots { .. } => "[Esc] cancel",
+        Mode::ProjectMenu { .. } | Mode::Snapshots { .. } => {
             "[↑] [↓] move   [Enter] select   [Esc] back"
         }
         Mode::Input { .. } => "[Tab] complete   [Enter] next   [Esc] cancel",
+        Mode::Explorer { explorer, .. } if explorer.typing.is_some() => {
+            "[Tab] complete   [Enter] go there   [Esc] back to the list"
+        }
+        Mode::Explorer { .. } => {
+            "[Space] check   [→] [←] open, close   [/] type a path   [Enter] apply   [Esc] cancel"
+        }
+        Mode::Apply { .. } => "",
         Mode::ChooseAgent { .. } => "[↑] [↓] move   [Enter] choose   [Esc] cancel",
         Mode::Confirm { .. } => "[y] confirm   [n] cancel",
         Mode::Running { result: None, .. } => "working, please wait…",
@@ -464,4 +580,19 @@ fn popup(area: Rect, width: u16, height: u16) -> Rect {
         width,
         height,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrapped_lines;
+
+    #[test]
+    fn counts_wrapped_lines() {
+        assert_eq!(wrapped_lines("", 10), 1);
+        assert_eq!(wrapped_lines("short", 10), 1);
+        assert_eq!(wrapped_lines("one two three", 9), 2);
+        assert_eq!(wrapped_lines("aaaa bbbb cccc", 9), 2);
+        assert_eq!(wrapped_lines("abcdefghijklmnopqrstuvwxy", 10), 3);
+        assert_eq!(wrapped_lines("first\nsecond line here", 10), 3);
+    }
 }

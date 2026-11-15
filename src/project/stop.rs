@@ -10,7 +10,7 @@ pub fn run(name: Option<&str>) -> Result<()> {
     let project = registry.resolve(name)?;
     let name = project.name.as_str();
     remote::run(STOP, &[&id(name)])?;
-    for id in project.session_ids() {
+    for id in project.session_ids()? {
         if mutagen::session(&id)?.is_some_and(|session| !session.paused) {
             mutagen::pause(&id)?;
         }

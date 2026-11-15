@@ -12,7 +12,15 @@ const STAMP_LENGTH: usize = 16;
 const STAMP_DIGITS: usize = 14;
 
 pub fn take(name: &str) -> Result<()> {
-    remote::run(RUN, &[&tools::snapshots_path(), "take", name])
+    let (script, args) = take_step(name);
+    remote::run(script, &args.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+pub fn take_step(name: &str) -> (&'static str, Vec<String>) {
+    (
+        RUN,
+        vec![tools::snapshots_path(), "take".to_owned(), name.to_owned()],
+    )
 }
 
 pub fn purge(name: &str) -> Result<()> {

@@ -56,9 +56,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
+      - run: sha256sum sai-*.tar.gz sai-*.zip > SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             sai-*.tar.gz
             sai-*.zip
+            SHA256SUMS
           generate_release_notes: true

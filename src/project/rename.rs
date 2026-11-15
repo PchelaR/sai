@@ -14,8 +14,10 @@ pub fn run(old: &str, new: &str) -> Result<()> {
     for target in project.targets() {
         mutagen::finish(&target.id)?;
     }
-    for target in project.git_targets() {
-        mutagen::drop_if_present(&target.id)?;
+    for folder in &project.folders {
+        for id in project.git_session_ids(folder)? {
+            mutagen::drop_if_present(&id)?;
+        }
     }
     remote::run(RENAME, &["move", old, new])?;
     registry.rename(old, new)?;

@@ -6,8 +6,9 @@ use anyhow::Result;
 use ratatui::DefaultTerminal;
 
 use crate::agent::Agent;
-use crate::project::{Registry, change, detach, remove, rename, stop};
-use crate::{attach, chat, doctor, logs, output, reset, shell, snapshot, update};
+use crate::project::folders::{self, Plan};
+use crate::project::{Registry, change, remove, rename, stop};
+use crate::{chat, doctor, logs, output, reset, shell, snapshot, update, upgrade};
 
 pub enum Action {
     Open(Session),
@@ -17,19 +18,15 @@ pub enum Action {
 pub enum Session {
     Chat(String),
     Shell(String),
+    Vps,
 }
 
 pub enum Task {
-    Attach {
+    Folders {
         project: String,
-        path: String,
         agent: Option<Agent>,
-        large: bool,
+        plan: Plan,
         git: bool,
-    },
-    Detach {
-        project: String,
-        path: String,
     },
     Change(String, Agent),
     Rename {
@@ -47,6 +44,7 @@ pub enum Task {
         purge: bool,
     },
     Update,
+    Upgrade,
     Doctor,
     Logs,
     Reset,
@@ -60,14 +58,7 @@ pub enum Progress {
 impl Task {
     pub fn title(&self) -> String {
         match self {
-            Task::Attach {
-                project,
-                path,
-                agent: Some(agent),
-                ..
-            } => format!("attach {project} {path} --agent {agent}"),
-            Task::Attach { project, path, .. } => format!("attach {project} {path}"),
-            Task::Detach { project, path } => format!("detach {project} {path}"),
+            Task::Folders { project, .. } => format!("folders {project}"),
             Task::Change(project, agent) => format!("change {agent} {project}"),
             Task::Rename { project, name } => format!("rename {project} {name}"),
             Task::Restore { snapshot, .. } => format!("restore {snapshot}"),
@@ -75,6 +66,7 @@ impl Task {
             Task::Remove { name, purge: false } => format!("rm {name}"),
             Task::Remove { name, purge: true } => format!("rm {name} --purge"),
             Task::Update => "update".to_owned(),
+            Task::Upgrade => "upgrade".to_owned(),
             Task::Doctor => "doctor".to_owned(),
             Task::Logs => "logs".to_owned(),
             Task::Reset => "reset".to_owned(),
@@ -83,17 +75,18 @@ impl Task {
 }
 
 pub fn open(terminal: &mut DefaultTerminal, session: Session) -> Result<()> {
-    ratatui::restore();
+    super::restore();
     let result = match session {
         Session::Chat(project) => chat::run(Some(&project), None),
         Session::Shell(project) => shell::run(Some(&project)),
+        Session::Vps => shell::vps(),
     };
     if let Err(error) = &result {
         logs::error(error);
         eprintln!("Error: {error:#}");
         wait_for_enter()?;
     }
-    *terminal = ratatui::init();
+    *terminal = super::init()?;
     Ok(())
 }
 
@@ -115,21 +108,12 @@ pub fn spawn(task: Task) -> Receiver<Progress> {
 
 fn execute(task: Task) -> Result<()> {
     match task {
-        Task::Attach {
+        Task::Folders {
             project,
-            path,
             agent,
-            large,
+            plan,
             git,
-        } => attach::run(
-            &project,
-            &path,
-            agent,
-            None,
-            &move |_, _| Ok(large),
-            &move |_| Ok(git),
-        ),
-        Task::Detach { project, path } => detach::run(&project, &path),
+        } => folders::apply(&project, agent, plan, git),
         Task::Change(project, agent) => change::run(Some(&project), agent),
         Task::Rename { project, name } => rename::run(&project, &name),
         Task::Restore {
@@ -143,6 +127,7 @@ fn execute(task: Task) -> Result<()> {
         Task::Stop(name) => stop::run(Some(&name)),
         Task::Remove { name, purge } => remove::run(&name, purge),
         Task::Update => update::run(),
+        Task::Upgrade => upgrade::run(),
         Task::Doctor => doctor::run(),
         Task::Logs => logs::report(),
         Task::Reset => reset::execute(false),

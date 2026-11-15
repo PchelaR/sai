@@ -21,6 +21,7 @@ pub fn run() -> Result<()> {
     let config = report.check("config", Config::load());
     if let Some(config) = &config {
         report.check("ssh key", config.public_key());
+        check_permissions(&report, config);
     }
     report.check("ssh client", installed(&ssh::program("ssh"), "-V"));
     check_windows_ssh(&mut report);
@@ -53,6 +54,21 @@ pub fn run() -> Result<()> {
     check_sync(&mut report)?;
 
     report.finish()
+}
+
+fn check_permissions(report: &Report, config: &Config) {
+    let lifted = config.agents.lifted();
+    if lifted.is_empty() {
+        report.ok("agent restrictions");
+    } else {
+        report.warn(
+            "agent restrictions",
+            format!(
+                "the config lets agents run {}, only snapshots can bring back what they break",
+                lifted.join(", ")
+            ),
+        );
+    }
 }
 
 fn check_windows_ssh(report: &mut Report) {

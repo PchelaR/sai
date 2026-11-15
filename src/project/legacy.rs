@@ -37,13 +37,17 @@ pub fn migrate(registry: &mut Registry) -> Result<()> {
         let agent = remote::output(MIGRATE, &as_strs(&args("check")))?;
         mutagen::finish(&session.name)
             .with_context(|| format!("cannot upgrade {name} while its sync is not connected"))?;
+        let label = agent.trim();
         registry.insert(Project {
             name: name.clone(),
-            agent: Agent::parse(agent.trim()),
+            agent: Agent::parse(label),
+            retired_agent: (!label.is_empty() && Agent::parse(label).is_none())
+                .then(|| label.to_owned()),
             folders: vec![Folder {
                 name: folder.clone(),
                 path,
                 git: false,
+                skip: Vec::new(),
             }],
         });
         registry.save()?;

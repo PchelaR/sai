@@ -8,7 +8,12 @@ pub fn run(name: Option<&str>, agent: Option<Agent>) -> Result<()> {
     let mut registry = Registry::open()?;
     let name = match name {
         Some(name) => registry.get(name)?.name.clone(),
-        None => attach::current_folder(&mut registry, agent, &attach::ask_git)?,
+        None => attach::current_folder(
+            &mut registry,
+            agent,
+            &attach::ask_new_items,
+            &attach::ask_git,
+        )?,
     };
     let attached = attach::ensure(&mut registry, &name, agent)?;
     if console::is_msys() {

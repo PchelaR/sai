@@ -1,0 +1,110 @@
+use std::collections::BTreeSet;
+
+use anyhow::{Result, bail, ensure};
+
+use super::content::{self, Check, Selection};
+use super::{Folder, Registry, detach};
+use crate::{attach, mutagen, output, remote, snapshot};
+
+const REMOVE_SKIPPED: &str = include_str!("scripts/remove_skipped.sh");
+
+pub fn run(name: Option<&str>, folder: Option<&str>) -> Result<()> {
+    let mut registry = Registry::open()?;
+    let project = registry.resolve(name)?.clone();
+    let folder = match (folder, project.folders.as_slice()) {
+        (Some(folder), _) => detach::find(&project, folder)?,
+        (None, [only]) => only.clone(),
+        (None, _) => bail!(
+            "{} has several folders, name one: sai files {} <folder>. Its folders are: {}",
+            project.name,
+            project.name,
+            project.folder_names().join(", ")
+        ),
+    };
+    let Some(selection) = attach::ask_items(&folder.path, Some(folder.skip.clone()))? else {
+        bail!(
+            "nothing is selected, keep at least one item or detach the folder with `sai detach {} {}`",
+            project.name,
+            folder.name
+        );
+    };
+    apply(&mut registry, &project.name, &folder, selection)
+}
+
+pub fn apply(
+    registry: &mut Registry,
+    name: &str,
+    folder: &Folder,
+    selection: Selection,
+) -> Result<()> {
+    let (uploaded, total) = (selection.uploaded, selection.total);
+    if !change(registry, name, folder, selection)? {
+        output::info("Nothing changed");
+        return Ok(());
+    }
+    attach::ensure(registry, name, None)?;
+    output::info(&format!(
+        "{} now uploads {} of {}. Skipped items stay on your computer, the VPS copies were removed and stay in snapshots",
+        folder.path.display(),
+        super::size::human(uploaded),
+        super::size::human(total)
+    ));
+    Ok(())
+}
+
+pub fn change(
+    registry: &mut Registry,
+    name: &str,
+    folder: &Folder,
+    selection: Selection,
+) -> Result<bool> {
+    let old: BTreeSet<String> = folder.skip.iter().cloned().collect();
+    let new: BTreeSet<String> = selection.skip.iter().cloned().collect();
+    if old == new {
+        return Ok(false);
+    }
+    for path in &new {
+        ensure!(is_safe(path), "cannot skip {path:?}");
+    }
+    attach::ensure_room(&folder.path, selection.uploaded)?;
+    let project = registry.get(name)?.clone();
+    let target = project.target(folder);
+    mutagen::finish(&target.id)?;
+    snapshot::take(name)?;
+    let removed: Vec<&str> = new
+        .iter()
+        .filter(|path| content::check(path, &old) != Check::Off)
+        .map(String::as_str)
+        .collect();
+    if !removed.is_empty() {
+        let mut args = vec![target.remote.as_str()];
+        args.extend(&removed);
+        remote::run(REMOVE_SKIPPED, &args)?;
+    }
+    registry.set_skip(name, &folder.path, selection.skip)?;
+    registry.save()?;
+    Ok(true)
+}
+
+fn is_safe(path: &str) -> bool {
+    !path.is_empty()
+        && path
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_safe;
+
+    #[test]
+    fn refuses_paths_that_leave_the_folder() {
+        assert!(is_safe("data/raw"));
+        assert!(is_safe("my file.bin"));
+        assert!(!is_safe(""));
+        assert!(!is_safe("/etc"));
+        assert!(!is_safe("../x"));
+        assert!(!is_safe("a/./b"));
+        assert!(!is_safe("a//b"));
+    }
+}

@@ -13,10 +13,9 @@ use session::Session;
 
 use crate::project::SyncTarget;
 use crate::vps::HOST_ALIAS;
-use crate::{files, ignores, logs, output};
+use crate::{ignores, logs, output};
 use crate::{secrets, ssh};
 
-const IGNORE_FILE: &str = ".saiignore";
 const LIST_TEMPLATE: &str = "{{ json . }}";
 const MIRROR: &str = "one-way-replica";
 const TWO_WAY: &str = "two-way-safe";
@@ -52,6 +51,13 @@ pub fn session(id: &str) -> Result<Option<Session>> {
 
 pub fn sessions() -> Result<Vec<Session>> {
     parse_sessions(&run(&["sync", "list", "--template", LIST_TEMPLATE])?)
+}
+
+pub fn session_names() -> Result<Vec<String>> {
+    Ok(sessions()?
+        .into_iter()
+        .map(|session| session.name)
+        .collect())
 }
 
 fn parse_sessions(output: &str) -> Result<Vec<Session>> {
@@ -175,7 +181,7 @@ fn mirror(target: &SyncTarget, ignores: &[String]) -> Result<()> {
 fn mirror_progress(target: &SyncTarget, ignores: &[String]) -> Result<()> {
     output::info(&format!(
         "  about {} to upload, on a slow connection this takes a while",
-        crate::project::size::human(crate::project::size::of(&target.local))
+        crate::project::size::human(crate::project::size::of(&target.local, &target.skip))
     ));
     create(target, MIRROR, ignores)?;
     wait_with_progress(&target.id)
@@ -243,19 +249,12 @@ fn create(target: &SyncTarget, mode: &str, ignores: &[String]) -> Result<()> {
 }
 
 fn ignores(target: &SyncTarget) -> Result<Vec<String>> {
-    let path = target.local.join(IGNORE_FILE);
-    let custom = files::read_or_empty(&path)?;
     Ok(ignores::BUILD
         .iter()
         .chain(secrets::PATTERNS)
         .map(|pattern| pattern.to_string())
-        .chain(
-            custom
-                .lines()
-                .map(str::trim)
-                .filter(|line| !line.is_empty() && !line.starts_with('#'))
-                .map(str::to_owned),
-        )
+        .chain(ignores::custom(&target.local)?)
+        .chain(target.skip.iter().map(|path| ignores::anchored(path)))
         .collect())
 }
 

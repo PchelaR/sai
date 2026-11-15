@@ -31,6 +31,8 @@ struct StoredFolder {
     path: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     git: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    skip: Vec<String>,
 }
 
 pub struct Registry {
@@ -46,14 +48,23 @@ impl Registry {
 
     pub fn load() -> Result<Self> {
         let path = path()?;
-        let stored: Stored = toml::from_str(&files::read_or_empty(&path)?)
-            .with_context(|| format!("invalid project list at {}", path.display()))?;
+        Self::parse(&files::read_or_empty(&path)?)
+            .with_context(|| format!("invalid project list at {}", path.display()))
+    }
+
+    fn parse(text: &str) -> Result<Self> {
+        let stored: Stored = toml::from_str(text)?;
         let projects = stored
             .projects
             .into_iter()
             .map(|(name, project)| {
+                let retired_agent = project
+                    .agent
+                    .clone()
+                    .filter(|agent| Agent::parse(agent).is_none());
                 let project = Project {
                     agent: project.agent.as_deref().and_then(Agent::parse),
+                    retired_agent,
                     folders: project
                         .folders
                         .into_iter()
@@ -61,6 +72,7 @@ impl Registry {
                             name: folder.name,
                             path: PathBuf::from(folder.path),
                             git: folder.git,
+                            skip: folder.skip,
                         })
                         .collect(),
                     name: name.clone(),
@@ -71,14 +83,17 @@ impl Registry {
         Ok(Self { projects })
     }
 
-    pub fn save(&self) -> Result<()> {
+    fn to_toml(&self) -> Result<String> {
         let stored = Stored {
             projects: self
                 .projects
                 .values()
                 .map(|project| {
                     let stored = StoredProject {
-                        agent: project.agent.map(|agent| agent.name().to_owned()),
+                        agent: project
+                            .agent
+                            .map(|agent| agent.name().to_owned())
+                            .or_else(|| project.retired_agent.clone()),
                         folders: project
                             .folders
                             .iter()
@@ -86,6 +101,7 @@ impl Registry {
                                 name: folder.name.clone(),
                                 path: folder.path.display().to_string(),
                                 git: folder.git,
+                                skip: folder.skip.clone(),
                             })
                             .collect(),
                     };
@@ -93,11 +109,15 @@ impl Registry {
                 })
                 .collect(),
         };
+        Ok(toml::to_string(&stored)?)
+    }
+
+    pub fn save(&self) -> Result<()> {
         let path = path()?;
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
         }
-        fs::write(&path, toml::to_string(&stored)?)
+        fs::write(&path, self.to_toml()?)
             .with_context(|| format!("failed to write {}", path.display()))
     }
 
@@ -146,6 +166,7 @@ impl Registry {
             Project {
                 name: name.to_owned(),
                 agent: Some(agent),
+                retired_agent: None,
                 folders: Vec::new(),
             },
         );
@@ -219,11 +240,27 @@ impl Registry {
         Ok(())
     }
 
-    pub fn set_agent(&mut self, project: &str, agent: Agent) -> Result<()> {
-        self.projects
+    pub fn set_skip(&mut self, project: &str, path: &Path, skip: Vec<String>) -> Result<()> {
+        let target = self
+            .projects
             .get_mut(project)
-            .with_context(|| format!("no project named {project}"))?
-            .agent = Some(agent);
+            .with_context(|| format!("no project named {project}"))?;
+        let folder = target
+            .folders
+            .iter_mut()
+            .find(|folder| same_path(&folder.path, path))
+            .with_context(|| format!("{} is not attached to {project}", path.display()))?;
+        folder.skip = skip;
+        Ok(())
+    }
+
+    pub fn set_agent(&mut self, project: &str, agent: Agent) -> Result<()> {
+        let target = self
+            .projects
+            .get_mut(project)
+            .with_context(|| format!("no project named {project}"))?;
+        target.agent = Some(agent);
+        target.retired_agent = None;
         Ok(())
     }
 
@@ -259,7 +296,7 @@ pub fn same_path(left: &Path, right: &Path) -> bool {
     normalized(left) == normalized(right)
 }
 
-fn is_inside(path: &Path, folder: &Path) -> bool {
+pub fn is_inside(path: &Path, folder: &Path) -> bool {
     let path = normalized(path);
     let folder = normalized(folder);
     path.len() > folder.len() && path.starts_with(&folder)
@@ -293,6 +330,7 @@ mod tests {
             name: name.to_owned(),
             path: PathBuf::from(path),
             git: false,
+            skip: Vec::new(),
         }
     }
 
@@ -382,6 +420,41 @@ mod tests {
         let store = registry.find("store").unwrap();
         assert_eq!(store.name, "store");
         assert_eq!(store.folders.len(), 1);
+    }
+
+    #[test]
+    fn keeps_removed_agents_until_the_project_is_switched() {
+        let text = "[projects.shop]\nagent = \"kimi\"\n\n[[projects.shop.folders]]\nname = \"front\"\npath = \"/code/front\"\n";
+        let mut registry = Registry::parse(text).unwrap();
+        let shop = registry.find("shop").unwrap();
+        assert_eq!(shop.agent, None);
+        assert_eq!(shop.retired_agent.as_deref(), Some("kimi"));
+        assert!(registry.to_toml().unwrap().contains("agent = \"kimi\""));
+        registry.set_agent("shop", Agent::Codex).unwrap();
+        let shop = registry.find("shop").unwrap();
+        assert_eq!(shop.retired_agent, None);
+        assert!(registry.to_toml().unwrap().contains("agent = \"codex\""));
+    }
+
+    #[test]
+    fn remembers_skipped_items() {
+        let mut registry = registry();
+        let front = Path::new("/code/front");
+        registry
+            .set_skip(
+                "shop",
+                front,
+                vec!["data".to_owned(), "models/big.bin".to_owned()],
+            )
+            .unwrap();
+        let text = registry.to_toml().unwrap();
+        let reloaded = Registry::parse(&text).unwrap();
+        assert_eq!(
+            reloaded.find("shop").unwrap().folders[0].skip,
+            ["data", "models/big.bin"]
+        );
+        registry.set_skip("shop", front, Vec::new()).unwrap();
+        assert!(!registry.to_toml().unwrap().contains("skip"));
     }
 
     #[test]

@@ -1,59 +1,11 @@
-use std::fs;
+use std::collections::BTreeSet;
 use std::path::Path;
 
-use crate::{ignores, secrets};
+use super::content;
 
-const LARGE: u64 = 1024 * 1024 * 1024;
-const VCS: &[&str] = &[".git", ".hg", ".svn"];
-
-pub fn is_large(bytes: u64) -> bool {
-    bytes > LARGE
-}
-
-pub fn of(path: &Path) -> u64 {
-    measure(path, u64::MAX)
-}
-
-pub fn exceeds_large(path: &Path) -> Option<u64> {
-    let size = measure(path, LARGE);
-    is_large(size).then_some(size)
-}
-
-fn measure(path: &Path, stop_after: u64) -> u64 {
-    let skipped: Vec<&str> = ignores::BUILD
-        .iter()
-        .chain(secrets::PATTERNS)
-        .filter_map(|pattern| pattern.strip_suffix('/'))
-        .chain(VCS.iter().copied())
-        .collect();
-    let mut total = 0;
-    let mut pending = vec![path.to_path_buf()];
-    while let Some(dir) = pending.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let Ok(kind) = entry.file_type() else {
-                continue;
-            };
-            if kind.is_dir() {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                if !skipped
-                    .iter()
-                    .any(|pattern| ignores::matches(pattern, &name))
-                {
-                    pending.push(entry.path());
-                }
-            } else if kind.is_file() {
-                total += entry.metadata().map_or(0, |metadata| metadata.len());
-                if total > stop_after {
-                    return total;
-                }
-            }
-        }
-    }
-    total
+pub fn of(path: &Path, skip: &[String]) -> u64 {
+    let skip: BTreeSet<String> = skip.iter().cloned().collect();
+    content::scan(path).uploaded(&skip)
 }
 
 pub fn human(bytes: u64) -> String {
@@ -89,6 +41,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("sai-size-{}", std::process::id()));
         for dir in [
             "src",
+            "data",
             "node_modules/x",
             ".git",
             "target",
@@ -98,12 +51,14 @@ mod tests {
             fs::create_dir_all(root.join(dir)).unwrap();
         }
         fs::write(root.join("src/a"), [0u8; 100]).unwrap();
+        fs::write(root.join("data/big"), [0u8; 500]).unwrap();
         fs::write(root.join("node_modules/x/b"), [0u8; 1000]).unwrap();
         fs::write(root.join(".git/c"), [0u8; 1000]).unwrap();
         fs::write(root.join("target/d"), [0u8; 1000]).unwrap();
         fs::write(root.join("venv/e"), [0u8; 1000]).unwrap();
         fs::write(root.join("app.egg-info/f"), [0u8; 1000]).unwrap();
-        assert_eq!(of(&root), 100);
+        assert_eq!(of(&root, &[]), 600);
+        assert_eq!(of(&root, &["data".to_owned()]), 100);
         fs::remove_dir_all(&root).unwrap();
     }
 }

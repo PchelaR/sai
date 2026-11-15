@@ -34,7 +34,6 @@ mod tests {
     fn agent_images_are_named_after_agents() {
         assert!(agent(Agent::Claude).starts_with("sai-claude:"));
         assert!(agent(Agent::Codex).starts_with("sai-codex:"));
-        assert!(agent(Agent::Kimi).starts_with("sai-kimi:"));
         assert!(base().starts_with("sai-base:"));
     }
 

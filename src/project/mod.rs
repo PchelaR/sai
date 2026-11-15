@@ -1,42 +1,44 @@
 pub mod change;
+pub mod content;
 pub mod detach;
+pub mod files;
+pub mod folders;
 mod legacy;
 pub mod list;
 mod registry;
 pub mod remove;
 pub mod rename;
+pub mod repos;
 pub mod size;
 pub mod stop;
+pub mod suggest;
 
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 
 use crate::agent::Agent;
 use crate::vps::USER;
 
-pub use registry::{Registry, same_path};
+pub use registry::{Registry, is_inside, same_path};
 
 const MAX_NAME_LENGTH: usize = 40;
-const GIT_DIR: &str = ".git";
 const GIT_SUFFIX: &str = "--git";
-
-pub fn is_git_repo(path: &Path) -> bool {
-    path.join(GIT_DIR).is_dir()
-}
 
 #[derive(Clone)]
 pub struct Folder {
     pub name: String,
     pub path: PathBuf,
     pub git: bool,
+    pub skip: Vec<String>,
 }
 
 #[derive(Clone)]
 pub struct Project {
     pub name: String,
     pub agent: Option<Agent>,
+    pub retired_agent: Option<String>,
     pub folders: Vec<Folder>,
 }
 
@@ -44,6 +46,7 @@ pub struct SyncTarget {
     pub id: String,
     pub local: PathBuf,
     pub remote: String,
+    pub skip: Vec<String>,
 }
 
 impl Project {
@@ -67,6 +70,7 @@ impl Project {
             id: sync_id(&self.name, &folder.name),
             local: folder.path.clone(),
             remote: format!("{}/{}", self.remote_path(), folder.name),
+            skip: folder.skip.clone(),
         }
     }
 
@@ -74,25 +78,50 @@ impl Project {
         self.folders
             .iter()
             .filter(|folder| folder.git)
-            .map(|folder| self.git_target(folder))
+            .flat_map(|folder| {
+                repos::find(&folder.path)
+                    .into_iter()
+                    .take(repos::LIMIT)
+                    .map(|relative| self.git_target(folder, &relative))
+            })
             .collect()
     }
 
-    pub fn git_target(&self, folder: &Folder) -> SyncTarget {
+    pub fn git_target(&self, folder: &Folder, relative: &Path) -> SyncTarget {
         let target = self.target(folder);
+        let remote = match repos::label(relative).as_str() {
+            "." => target.remote,
+            label => format!("{}/{label}", target.remote),
+        };
         SyncTarget {
-            id: format!("{}{GIT_SUFFIX}", target.id),
-            local: target.local.join(GIT_DIR),
-            remote: format!("{}/{GIT_DIR}", target.remote),
+            id: format!("{}{}", self.git_prefix(folder), repos::suffix(relative)),
+            local: target.local.join(relative).join(repos::GIT_DIR),
+            remote: format!("{remote}/{}", repos::GIT_DIR),
+            skip: Vec::new(),
         }
     }
 
-    pub fn session_ids(&self) -> Vec<String> {
-        self.targets()
+    pub fn git_prefix(&self, folder: &Folder) -> String {
+        format!("{}{GIT_SUFFIX}", sync_id(&self.name, &folder.name))
+    }
+
+    pub fn git_session_ids(&self, folder: &Folder) -> Result<Vec<String>> {
+        let prefix = self.git_prefix(folder);
+        Ok(crate::mutagen::session_names()?
             .into_iter()
-            .chain(self.git_targets())
-            .map(|target| target.id)
-            .collect()
+            .filter(|name| {
+                name.strip_prefix(&prefix)
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with("--"))
+            })
+            .collect())
+    }
+
+    pub fn session_ids(&self) -> Result<Vec<String>> {
+        let mut ids: Vec<String> = self.targets().into_iter().map(|target| target.id).collect();
+        for folder in &self.folders {
+            ids.extend(self.git_session_ids(folder)?);
+        }
+        Ok(ids)
     }
 
     pub fn folder_names(&self) -> Vec<&str> {
@@ -133,6 +162,16 @@ pub fn ensure_attachable(path: &Path) -> Result<()> {
         "{} is your home folder or a whole disk, attach the folder of a single project instead",
         path.display()
     );
+    if let Some(name) = path
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+        .find(|name| content::hidden(name, true))
+    {
+        bail!(
+            "{} is inside {name}, which sai never uploads: it holds secrets, build output or dependencies",
+            path.display()
+        );
+    }
     Ok(())
 }
 
@@ -159,6 +198,15 @@ pub fn validate_name(name: &str) -> Result<()> {
         "invalid name {name:?}, use up to {MAX_NAME_LENGTH} lowercase latin letters, digits and single dashes"
     );
     Ok(())
+}
+
+pub fn name_from(input: &str) -> Result<String> {
+    let name = slug(input.trim());
+    ensure!(
+        !name.is_empty() && name.len() <= MAX_NAME_LENGTH,
+        "cannot make a name from {input:?}, use up to {MAX_NAME_LENGTH} latin letters and digits"
+    );
+    Ok(name)
 }
 
 pub fn slug(name: &str) -> String {
@@ -216,6 +264,17 @@ mod tests {
         assert!(validate_name("../x").is_err());
         assert!(validate_name("a--b").is_err());
         assert!(validate_name(&"a".repeat(41)).is_err());
+        assert_eq!(
+            super::name_from("my_test_project_").unwrap(),
+            "my-test-project"
+        );
+        assert_eq!(super::name_from(" My Shop ").unwrap(), "my-shop");
+        assert!(super::name_from("___").is_err());
+        assert!(super::ensure_attachable(std::path::Path::new("/home/x/.ssh")).is_err());
+        assert!(
+            super::ensure_attachable(std::path::Path::new("/code/app/node_modules/x")).is_err()
+        );
+        assert!(super::ensure_attachable(std::path::Path::new("/code/app")).is_ok());
     }
 
     #[test]
