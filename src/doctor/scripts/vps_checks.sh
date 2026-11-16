@@ -11,6 +11,12 @@ else
   report fail "docker" "docker is not running"
 fi
 
+if docker buildx version >/dev/null 2>&1; then
+  report ok "docker buildx"
+else
+  report warn "docker buildx" "missing, images are built with the older builder. Install it as root: apt install docker-buildx-plugin (or docker-buildx)"
+fi
+
 services="ssh sai-firewall"
 if [ "$(cat "$marker" 2>/dev/null)" = minimal ]; then
   report ok "server hardening skipped (--minimal)"

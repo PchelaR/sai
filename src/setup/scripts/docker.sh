@@ -9,6 +9,11 @@ if ! command -v docker >/dev/null; then
   apt_get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin
   apt_get clean
 fi
+if ! docker buildx version >/dev/null 2>&1; then
+  apt_get install docker-buildx-plugin >/dev/null 2>&1 \
+    || apt_get install docker-buildx >/dev/null 2>&1 \
+    || echo "warning: docker buildx is not available, images are built with the older builder" >&2
+fi
 mkdir -p /etc/docker
 cat > /etc/docker/daemon.json <<'CONF'
 {
