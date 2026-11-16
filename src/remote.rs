@@ -131,7 +131,7 @@ fn output_named(name: &str, script: &str, args: &[&str]) -> Result<String> {
         output.status,
         &String::from_utf8_lossy(&output.stderr),
     )?;
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    Ok(output::printable(&String::from_utf8_lossy(&output.stdout)))
 }
 
 pub fn interactive(command: &str) -> Result<()> {
@@ -211,7 +211,8 @@ fn first_line(script: &str) -> &str {
 }
 
 fn check(name: &str, started: Instant, status: ExitStatus, stderr: &str) -> Result<()> {
-    let stderr = stderr.trim();
+    let stderr = output::printable(stderr.trim());
+    let stderr = stderr.as_str();
     logs::line(&format!(
         "finished with {status} in {:.1}s{}{stderr}",
         started.elapsed().as_secs_f64(),

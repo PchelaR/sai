@@ -8,14 +8,14 @@ case "$mode" in
       echo "an agent is running in $old, exit it with /exit first" >&2
       exit 1
     fi
-    if [ -e "$HOME/projects/$new" ] || [ -e "$HOME/snapshots/$new" ]; then
+    if [ -e "$HOME/projects/$new" ] || [ -e "$HOME/snapshots/$new" ] || [ -e "$HOME/agents/$new" ]; then
       echo "files of a removed project named $new are still on the VPS, delete them with \`sai rm $new --purge\` or pick another name" >&2
       exit 1
     fi
     ;;
   move)
     docker rm -f "sai-$old" >/dev/null 2>&1 || true
-    for root in "$HOME/projects" "$HOME/snapshots"; do
+    for root in "$HOME/projects" "$HOME/snapshots" "$HOME/agents"; do
       if [ -d "$root/$old" ]; then
         mv -T "$root/$old" "$root/$new"
       fi

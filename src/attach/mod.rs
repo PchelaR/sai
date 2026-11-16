@@ -239,6 +239,7 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
         image.as_str(),
         spec.as_str(),
         agent.name(),
+        agent.login_files(),
     ]);
     container_args.extend(mounts);
     steps.push((ENSURE_CONTAINER, container_args));

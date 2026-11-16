@@ -241,6 +241,7 @@ fn create(target: &SyncTarget, mode: &str, ignores: &[String]) -> Result<()> {
         format!("--name={}", target.id),
         format!("--sync-mode={mode}"),
         "--ignore-vcs".to_owned(),
+        "--symlink-mode=portable".to_owned(),
     ];
     args.extend(ignores.iter().map(|pattern| format!("--ignore={pattern}")));
     args.push(target.local.display().to_string());
@@ -251,10 +252,10 @@ fn create(target: &SyncTarget, mode: &str, ignores: &[String]) -> Result<()> {
 fn ignores(target: &SyncTarget) -> Result<Vec<String>> {
     Ok(ignores::BUILD
         .iter()
-        .chain(secrets::PATTERNS)
         .map(|pattern| pattern.to_string())
         .chain(ignores::custom(&target.local)?)
         .chain(target.skip.iter().map(|path| ignores::anchored(path)))
+        .chain(secrets::PATTERNS.iter().map(|pattern| pattern.to_string()))
         .collect())
 }
 
@@ -272,6 +273,10 @@ fn run<S: AsRef<OsStr>>(args: &[S]) -> Result<String> {
             stderr.trim()
         ));
     }
-    ensure!(output.status.success(), "{}", stderr.trim());
+    ensure!(
+        output.status.success(),
+        "{}",
+        output::printable(stderr.trim())
+    );
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }

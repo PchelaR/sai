@@ -36,11 +36,50 @@ pub fn collect<R>(run: impl FnOnce() -> R) -> (R, Vec<String>) {
     (result, collected)
 }
 
+pub fn printable(text: &str) -> String {
+    text.chars()
+        .map(|character| match character {
+            '\n' | '\t' => character,
+            control if control.is_control() => '?',
+            other => other,
+        })
+        .collect()
+}
+
+pub fn printable_line(text: &str) -> String {
+    text.chars()
+        .map(|character| {
+            if character.is_control() {
+                '?'
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
 fn emit(line: String, is_error: bool) {
+    let line = printable(&line);
     logs::line(&line);
     SINK.with(|sink| match &*sink.borrow() {
         Some(sink) => sink(line),
         None if is_error => eprintln!("{line}"),
         None => println!("{line}"),
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{printable, printable_line};
+
+    #[test]
+    fn removes_terminal_control_sequences() {
+        assert_eq!(
+            printable("a\u{1b}]52;c;QQ==\u{7}b\u{9b}c"),
+            "a?]52;c;QQ==?b?c"
+        );
+        assert_eq!(printable("one\ttwo\nthree\r"), "one\ttwo\nthree?");
+        assert_eq!(printable_line("a\nb\tc"), "a?b?c");
+        assert_eq!(printable("файл.txt"), "файл.txt");
+    }
 }

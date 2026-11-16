@@ -21,7 +21,7 @@ fi
 mkdir -p "$HOME/.sai"
 exec 9>"$HOME/.sai/snapshots.lock"
 flock 9
-rm -rf "$HOME/projects" "$HOME/snapshots"
+rm -rf "$HOME/projects" "$HOME/snapshots" "$HOME/agents"
 
 docker image prune -f >/dev/null
 docker builder prune -af >/dev/null

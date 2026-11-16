@@ -31,6 +31,13 @@ impl Agent {
         }
     }
 
+    pub fn login_files(self) -> &'static str {
+        match self {
+            Agent::Claude => ".credentials.json .claude.json settings.json",
+            Agent::Codex => "auth.json config.toml",
+        }
+    }
+
     pub fn dockerfile(self) -> &'static str {
         match self {
             Agent::Claude => include_str!("agent/claude.Dockerfile"),

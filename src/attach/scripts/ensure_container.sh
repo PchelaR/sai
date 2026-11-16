@@ -4,7 +4,12 @@ project=$3
 image=$4
 spec=$5
 agent=$6
-shift 6
+login_files=$7
+shift 7
+
+state="$HOME/agents/$project/$agent"
+login="$HOME/agents/.login/$agent"
+mkdir -p "$state" "$login"
 
 mounts=()
 state_dirs=()
@@ -32,7 +37,18 @@ fi
 if [ -n "$current" ]; then
   docker start "$container" >/dev/null
 else
-  docker run --rm -v "sai-state-$agent:/state" "$image" mkdir -p "${state_dirs[@]}"
+  if [ -z "$(ls -A "$login")" ] && docker volume inspect "sai-state-$agent" >/dev/null 2>&1; then
+    docker run --rm -v "sai-state-$agent:/old:ro" -v "$login:/login" "$image" \
+      sh -c 'for file in "$@"; do if [ -e "/old/$file" ]; then cp -p "/old/$file" /login/; fi; done' sh $login_files
+  fi
+  for dir in "${state_dirs[@]}"; do
+    mkdir -p "$state${dir#/state}"
+  done
+  for file in $login_files; do
+    if [ ! -e "$state/$file" ] && [ ! -L "$state/$file" ]; then
+      ln -s "/login/$file" "$state/$file"
+    fi
+  done
   mem_kb=$(awk '/^MemTotal/ { print $2 }' /proc/meminfo)
   docker run -d --init \
     --name "$container" \
@@ -48,7 +64,8 @@ else
     --pids-limit 512 \
     --restart unless-stopped \
     -v "$workspace:/workspace" \
-    -v "sai-state-$agent:/state" \
+    -v "$state:/state" \
+    -v "$login:/login" \
     "${mounts[@]}" \
     -e CARGO_HOME=/state/cargo \
     -e PIP_CACHE_DIR=/state/pip \

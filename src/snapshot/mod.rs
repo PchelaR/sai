@@ -1,3 +1,5 @@
+pub mod review;
+
 use std::path::{Component, Path};
 
 use anyhow::{Result, ensure};

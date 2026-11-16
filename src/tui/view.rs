@@ -11,6 +11,7 @@ use super::app::{AgentChoice, App, Input, Mode};
 use super::explorer::{Arrow, Explorer, Mark};
 use super::menu::{General, ProjectItem};
 use crate::agent::Agent;
+use crate::output::{printable, printable_line};
 use crate::project::size::human;
 use crate::snapshot::Snapshot;
 
@@ -42,6 +43,16 @@ pub fn render(frame: &mut Frame, app: &App) {
         Mode::ProjectMenu { selected } => render_project_menu(frame, app, *selected),
         Mode::Input { purpose, value } => render_input(frame, app, purpose, value),
         Mode::ChooseAgent { selected, purpose } => render_agents(frame, *selected, purpose),
+        Mode::LoadingReview { project, .. } => {
+            let area = popup(frame.area(), 60, 3);
+            frame.render_widget(Clear, area);
+            frame.render_widget(
+                Paragraph::new(format!("Checking what changed in {project}…"))
+                    .block(Block::bordered().title(" review ")),
+                area,
+            );
+        }
+        Mode::Review { project, lines } => render_review(frame, project, lines),
         Mode::LoadingSnapshots { project, .. } => {
             let area = popup(frame.area(), 60, 3);
             frame.render_widget(Clear, area);
@@ -92,7 +103,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     };
     let line = match (&app.error, &app.loaded) {
         (Some(_), None) => Line::from("Cannot load the projects, see below").fg(Color::Red),
-        (Some(error), _) => Line::from(error.as_str()).fg(Color::Red),
+        (Some(error), _) => Line::from(printable_line(error)).fg(Color::Red),
         (None, Some(loaded)) => Line::from(format!(
             "{}   cpu {} core(s), load {}   memory {}   disk {}",
             loaded.ip, loaded.vps.cores, loaded.vps.load, loaded.vps.memory, loaded.vps.disk
@@ -110,7 +121,7 @@ fn render_projects(frame: &mut Frame, app: &App, area: Rect) {
     if let (Some(error), None) = (&app.error, &app.loaded) {
         let mut lines: Vec<Line> = error
             .lines()
-            .map(|line| Line::from(line.to_owned()).fg(Color::Red))
+            .map(|line| Line::from(printable_line(line)).fg(Color::Red))
             .collect();
         lines.push(Line::default());
         lines.push(Line::from(
@@ -147,10 +158,14 @@ fn render_projects(frame: &mut Frame, app: &App, area: Rect) {
             Style::new()
         };
         Row::new([
-            Cell::from(project.name.as_str()),
+            if project.review > 0 {
+                Cell::from(format!("{} ! {}", project.name, project.review)).fg(Color::Yellow)
+            } else {
+                Cell::from(project.name.as_str())
+            },
             Cell::from(project.agent.as_str()),
-            Cell::from(project.state.as_str()),
-            Cell::from(project.sync.as_str()),
+            Cell::from(printable_line(&project.state)),
+            Cell::from(printable_line(&project.sync)),
             Cell::from(running.map_or("", |usage| usage.cpu.as_str())),
             Cell::from(running.map_or("", |usage| usage.memory.as_str())),
             Cell::from(folders(project)),
@@ -212,6 +227,30 @@ fn render_agents(frame: &mut Frame, selected: usize, purpose: &AgentChoice) {
     render_list(frame, area, title, items, Some(selected));
 }
 
+fn render_review(frame: &mut Frame, project: &str, lines: &[String]) {
+    let mut text = vec![
+        Line::from(format!(
+            "Files in {project} that can run code on your computer changed since your last review."
+        )),
+        Line::from("The agent or you changed them. Look at them before you run, build or commit."),
+        Line::default(),
+    ];
+    text.extend(
+        lines
+            .iter()
+            .map(|line| Line::from(printable_line(line)).fg(Color::Yellow)),
+    );
+    let height = (text.len() as u16 + 2).min(frame.area().height);
+    let area = popup(frame.area(), 90, height);
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .block(Block::bordered().title(" review ")),
+        area,
+    );
+}
+
 fn render_snapshots(frame: &mut Frame, snapshots: &[Snapshot], selected: usize) {
     let height = (snapshots.len().max(1) as u16 + 2).min(24);
     let area = popup(frame.area(), 80, height);
@@ -225,7 +264,7 @@ fn render_snapshots(frame: &mut Frame, snapshots: &[Snapshot], selected: usize) 
     }
     let items = snapshots.iter().map(|snapshot| {
         let (ago, date) = snapshot.when();
-        let summary = Span::from(snapshot.summary.clone());
+        let summary = Span::from(printable_line(&snapshot.summary));
         let summary = if snapshot.summary.contains("deleted") {
             summary.fg(Color::Yellow)
         } else {
@@ -271,10 +310,10 @@ fn render_explorer(frame: &mut Frame, explorer: &Explorer) {
         };
         let mut spans = vec![
             Span::from(format!("{}{arrow} {mark} ", "  ".repeat(row.depth))),
-            Span::from(row.name),
+            Span::from(printable_line(&row.name)),
         ];
         if !row.note.is_empty() {
-            spans.push(Span::from(format!("  {}", row.note)).dark_gray());
+            spans.push(Span::from(format!("  {}", printable_line(&row.note))).dark_gray());
         }
         if row.measuring {
             spans.push(Span::from("  measuring…").dark_gray());
@@ -318,7 +357,7 @@ fn render_explorer(frame: &mut Frame, explorer: &Explorer) {
             }
             Line::from(text)
         }
-        (None, Some(message)) => Line::from(format!(" {message}")).fg(Color::Red),
+        (None, Some(message)) => Line::from(format!(" {}", printable_line(message))).fg(Color::Red),
         (None, None) => Line::default(),
     };
     frame.render_widget(Clear, bottom);
@@ -329,7 +368,7 @@ fn folders(project: &crate::project::list::Row) -> String {
     project
         .folders
         .iter()
-        .map(|folder| folder.label())
+        .map(|folder| printable_line(&folder.label()))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -365,7 +404,7 @@ fn render_input(frame: &mut Frame, app: &App, purpose: &Input, value: &str) {
         lines.push(Line::from(text).dark_gray());
     }
     if let Some(error) = &app.input_error {
-        lines.push(Line::from(error.as_str()).fg(Color::Red));
+        lines.push(Line::from(printable_line(error)).fg(Color::Red));
     }
     let width = INPUT_WIDTH.min(frame.area().width);
     let inner = usize::from(width.saturating_sub(2)).max(1);
@@ -436,7 +475,7 @@ fn render_question(frame: &mut Frame, question: &str, title: &str) {
     let area = popup(frame.area(), width, height.saturating_add(2));
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(question.to_owned())
+        Paragraph::new(printable(question))
             .wrap(Wrap { trim: true })
             .block(Block::bordered().title(title.to_owned())),
         area,
@@ -490,7 +529,7 @@ fn render_running(
         lines.extend(
             error
                 .lines()
-                .map(|line| Line::from(line.to_owned()).fg(Color::Red)),
+                .map(|line| Line::from(printable_line(line)).fg(Color::Red)),
         );
     }
     let visible = area.height.saturating_sub(2) as usize;
@@ -552,7 +591,8 @@ fn footer_keys(mode: &Mode) -> &'static str {
     match mode {
         Mode::Browse => "[↑] [↓] move   [Enter] select   [?] help   [Esc] quit",
         Mode::Help => "any key: back",
-        Mode::LoadingSnapshots { .. } => "[Esc] cancel",
+        Mode::LoadingSnapshots { .. } | Mode::LoadingReview { .. } => "[Esc] cancel",
+        Mode::Review { .. } => "[Enter] I checked them   [Esc] later",
         Mode::ProjectMenu { .. } | Mode::Snapshots { .. } => {
             "[↑] [↓] move   [Enter] select   [Esc] back"
         }

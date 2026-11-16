@@ -5,6 +5,7 @@ tools=$(dirname "$(dirname "$(readlink -f "$0")")")
 projects=$HOME/projects
 snapshots=$HOME/snapshots
 excludes=$tools/snapshot-excludes
+watched_list=$tools/watched-files
 all_seconds=3600
 hourly_seconds=86400
 daily_seconds=604800
@@ -49,6 +50,7 @@ take() {
   mkdir -p "$root/.meta"
   if [ -n "$previous" ]; then
     summarize <<<"$changes" > "$root/.meta/$stamp"
+    watched_changes "$stamp" <<<"$changes" >> "$root/.meta/watched"
   else
     echo "first snapshot" > "$root/.meta/$stamp"
   fi
@@ -67,6 +69,42 @@ summarize() {
       if (added) parts = parts sep "added " added
       print (parts == "" ? "small changes" : parts)
     }'
+}
+
+watched_changes() {
+  awk -v stamp="$1" -v list="$watched_list" '
+    BEGIN {
+      while ((getline pattern < list) > 0) {
+        if (pattern ~ /\/$/) dirs[++d] = pattern
+        else if (pattern ~ /^\*/) suffixes[++s] = substr(pattern, 2)
+        else names[pattern] = 1
+      }
+    }
+    {
+      path = substr($0, 13)
+      if (path ~ /\/$/) next
+      if ($0 ~ /^\*deleting/) kind = "deleted"
+      else if ($0 ~ /^>f\+\+\+/) kind = "added"
+      else if ($0 ~ /^>f/ || $0 ~ /^cL/) kind = "changed"
+      else next
+      count = split(path, parts, "/")
+      base = parts[count]
+      hit = (base in names)
+      for (i = 1; !hit && i <= s; i++) {
+        hit = length(base) > length(suffixes[i]) && substr(base, length(base) - length(suffixes[i]) + 1) == suffixes[i]
+      }
+      for (i = 1; !hit && i <= d; i++) {
+        hit = index("/" path, "/" dirs[i]) > 0
+      }
+      if (hit) printf "%s\t%s\t%s\n", stamp, kind, path
+    }'
+}
+
+unreviewed() {
+  local file=$snapshots/$1/.meta/watched seen
+  [ -f "$file" ] || return 0
+  seen=$(cat "$snapshots/$1/.meta/watched.seen" 2>/dev/null || true)
+  awk -F '\t' -v seen="$seen" '$1 > seen' "$file"
 }
 
 drop() {
@@ -169,6 +207,12 @@ case "${1:-}" in
     free_space
     ;;
   list) list "$2" ;;
+  watched) unreviewed "$2" ;;
+  reviewed)
+    if [ -f "$snapshots/$2/.meta/watched" ]; then
+      tail -n 1 "$snapshots/$2/.meta/watched" | cut -f 1 > "$snapshots/$2/.meta/watched.seen"
+    fi
+    ;;
   restore) shift; restore "$@" ;;
   purge) rm -rf "${snapshots:?}/$2" ;;
   *) fail "usage: snapshots take|take-all|list|restore|purge" ;;

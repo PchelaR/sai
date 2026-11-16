@@ -79,6 +79,9 @@ enum Command {
     Snapshots {
         project: Option<String>,
     },
+    Review {
+        project: Option<String>,
+    },
     Restore {
         snapshot: String,
         path: Option<String>,
@@ -174,6 +177,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Files { project, folder } => {
             project::files::run(project.as_deref(), folder.as_deref())
         }
+        Command::Review { project } => snapshot::review::run(project.as_deref()),
         Command::Snapshots { project } => snapshot::list(project.as_deref()),
         Command::Restore {
             snapshot,

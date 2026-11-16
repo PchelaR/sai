@@ -38,13 +38,20 @@ pub struct Row {
     pub agent: String,
     pub state: String,
     pub sync: String,
+    pub review: usize,
     pub folders: Vec<FolderRow>,
+}
+
+struct Listing<'a> {
+    states: HashMap<&'a str, &'a str>,
+    on_vps: Vec<&'a str>,
+    reviews: HashMap<&'a str, usize>,
 }
 
 pub fn load() -> Result<Vec<Row>> {
     let registry = Registry::load()?;
     let output = remote::output(LIST, &[])?;
-    let (states, on_vps) = parse(&output);
+    let listing = parse(&output);
     let syncs: HashMap<String, String> = mutagen::sessions()?
         .into_iter()
         .map(|session| (session.name.clone(), session.summary()))
@@ -73,15 +80,21 @@ pub fn load() -> Result<Vec<Row>> {
                 .map(|agent| agent.to_string())
                 .or_else(|| project.retired_agent.clone())
                 .unwrap_or_default(),
-            state: states
+            state: listing
+                .states
                 .get(project.name.as_str())
                 .unwrap_or(&NO_CONTAINER)
                 .to_string(),
             sync: summary(&folders),
+            review: listing
+                .reviews
+                .get(project.name.as_str())
+                .copied()
+                .unwrap_or_default(),
             folders,
         });
     }
-    for name in on_vps {
+    for name in listing.on_vps {
         if registry.find(name).is_none() {
             rows.push(Row {
                 only_on_vps: true,
@@ -89,6 +102,7 @@ pub fn load() -> Result<Vec<Row>> {
                 agent: String::new(),
                 state: ONLY_ON_VPS.to_owned(),
                 sync: "Enter: attach a folder".to_owned(),
+                review: 0,
                 folders: Vec::new(),
             });
         }
@@ -96,20 +110,28 @@ pub fn load() -> Result<Vec<Row>> {
     Ok(rows)
 }
 
-fn parse(output: &str) -> (HashMap<&str, &str>, Vec<&str>) {
-    let mut states = HashMap::new();
-    let mut on_vps = Vec::new();
+fn parse(output: &str) -> Listing<'_> {
+    let mut listing = Listing {
+        states: HashMap::new(),
+        on_vps: Vec::new(),
+        reviews: HashMap::new(),
+    };
     for line in output.lines() {
         let fields: Vec<&str> = line.split('\t').collect();
         match fields.as_slice() {
             ["container", name, state] => {
-                states.insert(*name, *state);
+                listing.states.insert(*name, *state);
             }
-            ["files", name] => on_vps.push(*name),
+            ["files", name] => listing.on_vps.push(*name),
+            ["review", name, count] => {
+                listing
+                    .reviews
+                    .insert(*name, count.trim().parse().unwrap_or_default());
+            }
             _ => {}
         }
     }
-    (states, on_vps)
+    listing
 }
 
 pub fn run() -> Result<()> {
@@ -126,6 +148,12 @@ pub fn run() -> Result<()> {
             "{:<20} {:<8} {:<10} {}",
             row.name, row.agent, row.state, row.sync
         );
+        if row.review > 0 {
+            println!(
+                "  {} file(s) that can run code on your computer changed, see: sai review {}",
+                row.review, row.name
+            );
+        }
         for folder in &row.folders {
             println!(
                 "  {:<18} {:<20} {}",
@@ -168,9 +196,11 @@ mod tests {
 
     #[test]
     fn reads_containers_and_project_files() {
-        let (states, on_vps) = parse("container\tshop\trunning\nfiles\tshop\nfiles\told\njunk\n");
-        assert_eq!(states.get("shop"), Some(&"running"));
-        assert_eq!(on_vps, ["shop", "old"]);
+        let listing =
+            parse("container\tshop\trunning\nfiles\tshop\nfiles\told\nreview\tshop\t2\njunk\n");
+        assert_eq!(listing.states.get("shop"), Some(&"running"));
+        assert_eq!(listing.on_vps, ["shop", "old"]);
+        assert_eq!(listing.reviews.get("shop"), Some(&2));
     }
 
     fn folder(name: &str, sync: &str) -> FolderRow {

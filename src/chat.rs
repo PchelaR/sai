@@ -2,6 +2,7 @@ use anyhow::Result;
 
 use crate::agent::Agent;
 use crate::project::Registry;
+use crate::snapshot::review;
 use crate::{attach, console, output, quote, remote};
 
 pub fn run(name: Option<&str>, agent: Option<Agent>) -> Result<()> {
@@ -23,10 +24,12 @@ pub fn run(name: Option<&str>, agent: Option<Agent>) -> Result<()> {
         "{} || {{ status=$?; echo; echo \"The agent exited with status $status, press Enter to close\"; read line; }}",
         attached.agent.command()
     );
-    remote::interactive(&format!(
+    let result = remote::interactive(&format!(
         "exec docker exec -it {} tmux new -A -s {} {}",
         quote::shell(&attached.project.id()),
         attached.agent.name(),
         quote::shell(&command)
-    ))
+    ));
+    review::after_chat(&name);
+    result
 }

@@ -11,7 +11,7 @@ use super::menu::{General, ProjectItem};
 use crate::agent::Agent;
 use crate::project::folders::Plan;
 use crate::project::list::Row;
-use crate::snapshot::Snapshot;
+use crate::snapshot::{Snapshot, review};
 use crate::{project, snapshot};
 
 pub enum Outcome {
@@ -47,6 +47,14 @@ pub enum Mode {
     ChooseAgent {
         selected: usize,
         purpose: AgentChoice,
+    },
+    LoadingReview {
+        project: String,
+        receiver: Receiver<Result<Vec<String>, String>>,
+    },
+    Review {
+        project: String,
+        lines: Vec<String>,
     },
     LoadingSnapshots {
         project: String,
@@ -131,6 +139,21 @@ impl App {
     pub fn tick(&mut self) -> bool {
         match &mut self.mode {
             Mode::Explorer { explorer, .. } => explorer.tick(),
+            Mode::LoadingReview { project, receiver } => {
+                let Ok(result) = receiver.try_recv() else {
+                    return false;
+                };
+                let project = std::mem::take(project);
+                match result {
+                    Ok(lines) if lines.is_empty() => self.mode = Mode::ProjectMenu { selected: 0 },
+                    Ok(lines) => self.mode = Mode::Review { project, lines },
+                    Err(error) => {
+                        self.mode = Mode::ProjectMenu { selected: 0 };
+                        self.error = Some(error);
+                    }
+                }
+                true
+            }
             Mode::LoadingSnapshots { project, receiver } => {
                 let Ok(result) = receiver.try_recv() else {
                     return false;
@@ -173,6 +196,25 @@ impl App {
             Mode::ProjectMenu { selected } => self.project_menu(selected, key),
             Mode::Input { purpose, value } => self.input(purpose, value, key),
             Mode::ChooseAgent { selected, purpose } => self.choose_agent(selected, purpose, key),
+            Mode::LoadingReview { project, receiver } => {
+                if key.code == KeyCode::Esc {
+                    self.mode = Mode::ProjectMenu { selected: 0 };
+                } else {
+                    self.mode = Mode::LoadingReview { project, receiver };
+                }
+                None
+            }
+            Mode::Review { project, lines } => {
+                match key.code {
+                    KeyCode::Enter => {
+                        self.mark_reviewed(&project);
+                        self.mode = Mode::ProjectMenu { selected: 0 };
+                    }
+                    KeyCode::Esc => self.mode = Mode::ProjectMenu { selected: 0 },
+                    _ => self.mode = Mode::Review { project, lines },
+                }
+                None
+            }
             Mode::LoadingSnapshots { project, receiver } => {
                 if key.code != KeyCode::Esc {
                     self.mode = Mode::LoadingSnapshots { project, receiver };
@@ -232,7 +274,12 @@ impl App {
                     self.project_item(ProjectItem::Folders)
                 }
                 None => {
-                    self.mode = Mode::ProjectMenu { selected: 0 };
+                    let project = self.selected_project()?;
+                    if project.review > 0 {
+                        self.load_review(project.name.clone());
+                    } else {
+                        self.mode = Mode::ProjectMenu { selected: 0 };
+                    }
                     None
                 }
             },
@@ -496,6 +543,30 @@ impl App {
             selected,
         };
         None
+    }
+
+    fn load_review(&mut self, project: String) {
+        let (sender, receiver) = mpsc::channel();
+        let name = project.clone();
+        thread::spawn(move || {
+            let result = review::unreviewed(&name)
+                .map(|changes| review::lines(&changes))
+                .map_err(|error| format!("{error:#}"));
+            sender.send(result).ok();
+        });
+        self.mode = Mode::LoadingReview { project, receiver };
+    }
+
+    fn mark_reviewed(&mut self, project: &str) {
+        let name = project.to_owned();
+        thread::spawn(move || {
+            review::mark(&name).ok();
+        });
+        if let Some(loaded) = &mut self.loaded
+            && let Some(row) = loaded.projects.iter_mut().find(|row| row.name == project)
+        {
+            row.review = 0;
+        }
     }
 
     fn explorer(&mut self, project: String, agent: Option<Agent>) -> Option<Outcome> {

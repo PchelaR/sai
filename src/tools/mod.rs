@@ -12,6 +12,42 @@ const SNAPSHOTS: &str = include_str!("snapshots.sh");
 const SNAPSHOT_SERVICE: &str = include_str!("sai-snapshot.service");
 const SNAPSHOT_TIMER: &str = include_str!("sai-snapshot.timer");
 const TMUX: &str = include_str!("tmux.conf");
+const WATCHED: &[&str] = &[
+    ".saiignore",
+    ".gitignore",
+    ".gitattributes",
+    ".gitmodules",
+    ".envrc",
+    ".tool-versions",
+    "mise.toml",
+    ".mise.toml",
+    "package.json",
+    ".npmrc",
+    "Makefile",
+    "makefile",
+    "GNUmakefile",
+    "justfile",
+    "Justfile",
+    "Taskfile.yml",
+    "build.rs",
+    "setup.py",
+    "pyproject.toml",
+    ".pre-commit-config.yaml",
+    "lefthook.yml",
+    "docker-compose.yml",
+    "docker-compose.yaml",
+    "compose.yml",
+    "compose.yaml",
+    "*.code-workspace",
+    ".husky/",
+    ".githooks/",
+    ".git-hooks/",
+    ".vscode/",
+    ".idea/",
+    ".devcontainer/",
+    ".github/workflows/",
+    ".cargo/",
+];
 const EXECUTABLE: &str = "755";
 const READABLE: &str = "644";
 
@@ -35,6 +71,7 @@ pub fn install_step(
     let files = [
         (snapshots_path(), EXECUTABLE, SNAPSHOTS.to_owned()),
         (file("snapshot-excludes"), READABLE, snapshot_excludes()),
+        (file("watched-files"), READABLE, watched_files()),
         (
             format!("{units}/sai-snapshot.service"),
             READABLE,
@@ -77,6 +114,13 @@ pub fn read_only_mounts(agent: Agent) -> Vec<String> {
 
 fn file(name: &str) -> String {
     format!("/home/{USER}/.sai/{name}")
+}
+
+fn watched_files() -> String {
+    WATCHED
+        .iter()
+        .map(|pattern| format!("{pattern}\n"))
+        .collect()
 }
 
 fn snapshot_excludes() -> String {
