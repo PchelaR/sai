@@ -9,6 +9,8 @@ use super::explorer::{Explorer, Step};
 use super::loader::Loaded;
 use super::menu::{General, ProjectItem};
 use crate::agent::Agent;
+use crate::agent::Start;
+use crate::chat::chats::{self, Chats};
 use crate::project::folders::Plan;
 use crate::project::list::Row;
 use crate::snapshot::{Snapshot, review};
@@ -26,6 +28,11 @@ pub enum Input {
     RestorePath { project: String, snapshot: String },
     ResetConfirmation,
     PurgeConfirmation { project: String },
+}
+
+pub enum ChatPurpose {
+    Open,
+    Remove,
 }
 
 pub enum AgentChoice {
@@ -47,6 +54,30 @@ pub enum Mode {
     ChooseAgent {
         selected: usize,
         purpose: AgentChoice,
+    },
+    LoadingChats {
+        project: String,
+        agent: Agent,
+        purpose: ChatPurpose,
+        receiver: Receiver<Result<Chats, String>>,
+    },
+    Chats {
+        project: String,
+        agent: Agent,
+        purpose: ChatPurpose,
+        chats: Chats,
+        selected: usize,
+    },
+    LoadingChatView {
+        title: String,
+        receiver: Receiver<Result<String, String>>,
+        back: Box<Mode>,
+    },
+    ChatView {
+        title: String,
+        lines: Vec<String>,
+        scroll: usize,
+        back: Box<Mode>,
     },
     LoadingReview {
         project: String,
@@ -97,6 +128,7 @@ pub struct App {
     pub loading: bool,
     pub selected: usize,
     pub mode: Mode,
+    pub pending: Option<Outcome>,
 }
 
 impl App {
@@ -139,6 +171,64 @@ impl App {
     pub fn tick(&mut self) -> bool {
         match &mut self.mode {
             Mode::Explorer { explorer, .. } => explorer.tick(),
+            Mode::LoadingChats {
+                project,
+                agent,
+                purpose,
+                receiver,
+            } => {
+                let Ok(result) = receiver.try_recv() else {
+                    return false;
+                };
+                let project = std::mem::take(project);
+                let agent = *agent;
+                let purpose = std::mem::replace(purpose, ChatPurpose::Open);
+                self.mode = Mode::Browse;
+                match (result, purpose) {
+                    (Err(error), _) => self.error = Some(error),
+                    (Ok(chats), ChatPurpose::Open) if chats.list.len() < 2 => {
+                        self.pending = open(Session::Chat(project, Start::Last));
+                    }
+                    (Ok(chats), ChatPurpose::Remove) if chats.list.is_empty() => {
+                        self.error = Some(format!("{project} has no chats yet"));
+                    }
+                    (Ok(chats), purpose) => {
+                        self.mode = Mode::Chats {
+                            project,
+                            agent,
+                            purpose,
+                            chats,
+                            selected: 0,
+                        }
+                    }
+                }
+                true
+            }
+            Mode::LoadingChatView { receiver, .. } => {
+                let Ok(result) = receiver.try_recv() else {
+                    return false;
+                };
+                let Mode::LoadingChatView { title, back, .. } = std::mem::take(&mut self.mode)
+                else {
+                    return false;
+                };
+                match result {
+                    Ok(text) => {
+                        let lines: Vec<String> = text.lines().map(str::to_owned).collect();
+                        self.mode = Mode::ChatView {
+                            title,
+                            scroll: lines.len().saturating_sub(VIEW_TAIL),
+                            lines,
+                            back,
+                        };
+                    }
+                    Err(error) => {
+                        self.mode = *back;
+                        self.error = Some(error);
+                    }
+                }
+                true
+            }
             Mode::LoadingReview { project, receiver } => {
                 let Ok(result) = receiver.try_recv() else {
                     return false;
@@ -196,6 +286,73 @@ impl App {
             Mode::ProjectMenu { selected } => self.project_menu(selected, key),
             Mode::Input { purpose, value } => self.input(purpose, value, key),
             Mode::ChooseAgent { selected, purpose } => self.choose_agent(selected, purpose, key),
+            Mode::LoadingChats {
+                project,
+                agent,
+                purpose,
+                receiver,
+            } => {
+                if key.code != KeyCode::Esc {
+                    self.mode = Mode::LoadingChats {
+                        project,
+                        agent,
+                        purpose,
+                        receiver,
+                    };
+                }
+                None
+            }
+            Mode::Chats {
+                project,
+                agent,
+                purpose,
+                chats,
+                selected,
+            } => self.chats(project, agent, purpose, chats, selected, key),
+            Mode::LoadingChatView {
+                title,
+                receiver,
+                back,
+            } => {
+                self.mode = if key.code == KeyCode::Esc {
+                    *back
+                } else {
+                    Mode::LoadingChatView {
+                        title,
+                        receiver,
+                        back,
+                    }
+                };
+                None
+            }
+            Mode::ChatView {
+                title,
+                lines,
+                scroll,
+                back,
+            } => {
+                let last = lines.len().saturating_sub(1);
+                let scroll = match key.code {
+                    KeyCode::Esc | KeyCode::Enter => {
+                        self.mode = *back;
+                        return None;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => scroll.saturating_sub(1),
+                    KeyCode::Down | KeyCode::Char('j') => (scroll + 1).min(last),
+                    KeyCode::PageUp => scroll.saturating_sub(VIEW_PAGE),
+                    KeyCode::PageDown => (scroll + VIEW_PAGE).min(last),
+                    KeyCode::Home => 0,
+                    KeyCode::End => lines.len().saturating_sub(VIEW_TAIL),
+                    _ => scroll,
+                };
+                self.mode = Mode::ChatView {
+                    title,
+                    lines,
+                    scroll,
+                    back,
+                };
+                None
+            }
             Mode::LoadingReview { project, receiver } => {
                 if key.code == KeyCode::Esc {
                     self.mode = Mode::ProjectMenu { selected: 0 };
@@ -349,7 +506,17 @@ impl App {
             return None;
         }
         match item {
-            ProjectItem::Chat => open(Session::Chat(name)),
+            ProjectItem::Chat => self.load_chats(name, agent_of(project), ChatPurpose::Open),
+            ProjectItem::NewChat if project.busy => {
+                self.error = Some(format!(
+                    "the agent in {name} is busy with a task, new chat is available when it finishes"
+                ));
+                None
+            }
+            ProjectItem::NewChat => open(Session::Chat(name, Start::New)),
+            ProjectItem::RemoveChat => {
+                self.load_chats(name, agent_of(project), ChatPurpose::Remove)
+            }
             ProjectItem::Shell => open(Session::Shell(name)),
             ProjectItem::Stop => run(Task::Stop(name)),
             ProjectItem::Folders if project.only_on_vps => {
@@ -545,6 +712,106 @@ impl App {
         None
     }
 
+    fn load_chats(
+        &mut self,
+        project: String,
+        agent: Agent,
+        purpose: ChatPurpose,
+    ) -> Option<Outcome> {
+        let (sender, receiver) = mpsc::channel();
+        let name = project.clone();
+        thread::spawn(move || {
+            sender
+                .send(chats::load(&name, agent).map_err(|error| format!("{error:#}")))
+                .ok();
+        });
+        self.mode = Mode::LoadingChats {
+            project,
+            agent,
+            purpose,
+            receiver,
+        };
+        None
+    }
+
+    fn chats(
+        &mut self,
+        project: String,
+        agent: Agent,
+        purpose: ChatPurpose,
+        chats: Chats,
+        selected: usize,
+        key: KeyEvent,
+    ) -> Option<Outcome> {
+        let last = chats.list.len().saturating_sub(1);
+        let selected = match key.code {
+            KeyCode::Esc => return None,
+            KeyCode::Enter => {
+                let chat = chats.list.get(selected)?;
+                return match purpose {
+                    ChatPurpose::Open => {
+                        let switching =
+                            chats.running().is_some_and(|running| running.id != chat.id);
+                        if switching && chats.busy() {
+                            self.error = Some(BUSY_SWITCH.to_owned());
+                            return None;
+                        }
+                        open(Session::Chat(project, Start::Open(chat.id.clone())))
+                    }
+                    ChatPurpose::Remove => {
+                        let current = chats.running().is_some_and(|running| running.id == chat.id);
+                        if current && chats.busy() {
+                            self.error = Some(BUSY_REMOVE.to_owned());
+                            return None;
+                        }
+                        self.confirm(
+                            format!("Delete the chat \"{}\"? This cannot be undone", chat.title),
+                            Action::Run(Task::RemoveChat {
+                                project,
+                                agent,
+                                chat: chat.id.clone(),
+                            }),
+                        )
+                    }
+                };
+            }
+            KeyCode::Char('v') => {
+                let chat = chats.list.get(selected)?;
+                let (sender, receiver) = mpsc::channel();
+                let (name, id) = (project.clone(), chat.id.clone());
+                thread::spawn(move || {
+                    sender
+                        .send(chats::show(&name, agent, &id).map_err(|error| format!("{error:#}")))
+                        .ok();
+                });
+                let title = chat.title.clone();
+                self.mode = Mode::LoadingChatView {
+                    title,
+                    receiver,
+                    back: Box::new(Mode::Chats {
+                        project,
+                        agent,
+                        purpose,
+                        chats,
+                        selected,
+                    }),
+                };
+                return None;
+            }
+            KeyCode::Down | KeyCode::Char('j') => (selected + 1).min(last),
+            KeyCode::Up | KeyCode::Char('k') => selected.saturating_sub(1),
+            _ => selected,
+        };
+        self.mode = Mode::Chats {
+            project,
+            agent,
+            purpose,
+            chats,
+            selected,
+        };
+        None
+    }
+
     fn load_review(&mut self, project: String) {
         let (sender, receiver) = mpsc::channel();
         let name = project.clone();
@@ -684,6 +951,16 @@ impl App {
         self.mode = Mode::Confirm { question, action };
         None
     }
+}
+
+const VIEW_PAGE: usize = 20;
+const VIEW_TAIL: usize = 30;
+const BUSY_SWITCH: &str =
+    "the agent is busy with a task in the current chat, switch when it finishes";
+const BUSY_REMOVE: &str = "the agent is busy in this chat, delete it when the agent finishes";
+
+fn agent_of(project: &Row) -> Agent {
+    Agent::parse(&project.agent).unwrap_or_default()
 }
 
 fn run(task: Task) -> Option<Outcome> {

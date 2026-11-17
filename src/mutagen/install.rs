@@ -47,6 +47,16 @@ const PLATFORMS: &[(&str, &str, &str, &str)] = &[
     ),
 ];
 
+pub fn is_installed() -> bool {
+    sai_data_dir()
+        .map(|dir| {
+            dir.join(format!("mutagen-{VERSION}"))
+                .join(executable())
+                .exists()
+        })
+        .unwrap_or(false)
+}
+
 pub fn binary() -> Result<PathBuf> {
     let dir = sai_data_dir()?.join(format!("mutagen-{VERSION}"));
     let binary = dir.join(executable());

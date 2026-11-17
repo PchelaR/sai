@@ -100,6 +100,22 @@ watched_changes() {
     }'
 }
 
+forget_uploaded() {
+  local name=$2 since=$3 file
+  shift 3
+  file=$snapshots/$name/.meta/watched
+  [ -f "$file" ] || return 0
+  awk -F '\t' -v since="$since" -v folders="$*" '
+    BEGIN { count = split(folders, list, " ") }
+    {
+      if ($1 >= since) {
+        for (i = 1; i <= count; i++) if (index($3, list[i] "/") == 1) next
+      }
+      print
+    }' "$file" > "$file.tmp"
+  mv "$file.tmp" "$file"
+}
+
 unreviewed() {
   local file=$snapshots/$1/.meta/watched seen
   [ -f "$file" ] || return 0
@@ -192,7 +208,12 @@ exec 9>"$tools/snapshots.lock"
 flock 9
 
 case "${1:-}" in
-  take) take "$2" ;;
+  take)
+    take "$2"
+    if [ "$#" -gt 3 ]; then
+      forget_uploaded "$@"
+    fi
+    ;;
   take-all)
     for dir in "$projects"/*/; do
       if [ -d "$dir" ]; then

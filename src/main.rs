@@ -12,6 +12,7 @@ mod image;
 mod logs;
 mod mutagen;
 mod output;
+mod presence;
 mod project;
 mod quote;
 mod remote;
@@ -31,7 +32,7 @@ mod vps;
 
 use std::env;
 
-use agent::Agent;
+use agent::{Agent, Start};
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 
@@ -59,6 +60,17 @@ enum Command {
         project: Option<String>,
         #[arg(long, value_enum)]
         agent: Option<Agent>,
+        #[arg(long, conflicts_with = "open")]
+        new: bool,
+        #[arg(long)]
+        open: Option<usize>,
+    },
+    Chats {
+        project: Option<String>,
+        #[arg(long, conflicts_with = "show")]
+        rm: Option<usize>,
+        #[arg(long)]
+        show: Option<usize>,
     },
     Shell {
         project: Option<String>,
@@ -131,10 +143,16 @@ async fn main() -> anyhow::Result<()> {
     } else {
         &arguments
     });
+    let interactive = matches!(
+        cli.command,
+        None | Some(Command::Chat { .. } | Command::Shell { .. } | Command::Vps)
+    );
+    let presence = presence::enter(interactive);
     let result = run(cli).await;
     if let Err(error) = &result {
         logs::error(error);
     }
+    presence.leave();
     result
 }
 
@@ -169,7 +187,17 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Detach { project, dir_path } => {
             project::detach::run_with_confirmation(&project, &dir_path)
         }
-        Command::Chat { project, agent } => chat::run(project.as_deref(), agent),
+        Command::Chat {
+            project,
+            agent,
+            new,
+            open,
+        } => match (new, open) {
+            (_, Some(number)) => chat::open_number(project.as_deref(), agent, number),
+            (true, None) => chat::run(project.as_deref(), agent, Start::New),
+            (false, None) => chat::run(project.as_deref(), agent, Start::Ask),
+        },
+        Command::Chats { project, rm, show } => chat::list(project.as_deref(), rm, show),
         Command::Shell { project } => shell::run(project.as_deref()),
         Command::Vps => shell::vps(),
         Command::Change { agent, project } => project::change::run(project.as_deref(), agent),

@@ -7,10 +7,11 @@ use ratatui::widgets::{
     Block, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap,
 };
 
-use super::app::{AgentChoice, App, Input, Mode};
+use super::app::{AgentChoice, App, ChatPurpose, Input, Mode};
 use super::explorer::{Arrow, Explorer, Mark};
 use super::menu::{General, ProjectItem};
 use crate::agent::Agent;
+use crate::chat::chats::Chats;
 use crate::output::{printable, printable_line};
 use crate::project::size::human;
 use crate::snapshot::Snapshot;
@@ -43,6 +44,37 @@ pub fn render(frame: &mut Frame, app: &App) {
         Mode::ProjectMenu { selected } => render_project_menu(frame, app, *selected),
         Mode::Input { purpose, value } => render_input(frame, app, purpose, value),
         Mode::ChooseAgent { selected, purpose } => render_agents(frame, *selected, purpose),
+        Mode::LoadingChats { project, .. } => {
+            let area = popup(frame.area(), 60, 3);
+            frame.render_widget(Clear, area);
+            frame.render_widget(
+                Paragraph::new(format!("Loading the chats of {project}…"))
+                    .block(Block::bordered().title(" chats ")),
+                area,
+            );
+        }
+        Mode::Chats {
+            project,
+            purpose,
+            chats,
+            selected,
+            ..
+        } => render_chats(frame, project, purpose, chats, *selected),
+        Mode::LoadingChatView { title, .. } => {
+            let area = popup(frame.area(), 70, 3);
+            frame.render_widget(Clear, area);
+            frame.render_widget(
+                Paragraph::new(format!("Loading \"{}\"…", printable_line(title)))
+                    .block(Block::bordered().title(" chat ")),
+                area,
+            );
+        }
+        Mode::ChatView {
+            title,
+            lines,
+            scroll,
+            ..
+        } => render_chat_view(frame, title, lines, *scroll),
         Mode::LoadingReview { project, .. } => {
             let area = popup(frame.area(), 60, 3);
             frame.render_widget(Clear, area);
@@ -207,9 +239,22 @@ fn render_project_menu(frame: &mut Frame, app: &App, selected: usize) {
     let name = app
         .selected_project()
         .map_or("", |project| project.name.as_str());
-    let items = ProjectItem::ALL
-        .iter()
-        .map(|item| menu_item(item.command(), item.description(), item.key()));
+    let busy = app.selected_project().is_some_and(|project| project.busy);
+    let items = ProjectItem::ALL.iter().map(|item| {
+        if busy && matches!(item, ProjectItem::NewChat) {
+            ListItem::new(
+                format!(
+                    "{:<COMMAND_WIDTH$}{:<DESCRIPTION_WIDTH$}[{}]",
+                    item.command(),
+                    "Available when the agent finishes",
+                    item.key()
+                )
+                .dark_gray(),
+            )
+        } else {
+            menu_item(item.command(), item.description(), item.key())
+        }
+    });
     let area = popup(frame.area(), 58, ProjectItem::ALL.len() as u16 + 2);
     frame.render_widget(Clear, area);
     render_list(frame, area, &format!(" {name} "), items, Some(selected));
@@ -225,6 +270,61 @@ fn render_agents(frame: &mut Frame, selected: usize, purpose: &AgentChoice) {
     let area = popup(frame.area(), 30, agents.len() as u16 + 2);
     frame.render_widget(Clear, area);
     render_list(frame, area, title, items, Some(selected));
+}
+
+fn render_chat_view(frame: &mut Frame, title: &str, lines: &[String], scroll: usize) {
+    let full = frame.area();
+    let area = popup(
+        full,
+        full.width.saturating_sub(4),
+        full.height.saturating_sub(2),
+    );
+    frame.render_widget(Clear, area);
+    let text: Vec<Line> = lines
+        .iter()
+        .skip(scroll)
+        .map(|line| {
+            let line = printable_line(line);
+            if line.ends_with(':') && !line.starts_with(' ') {
+                Line::from(line).bold()
+            } else if line.trim_start().starts_with('[') {
+                Line::from(line).dark_gray()
+            } else {
+                Line::from(line)
+            }
+        })
+        .collect();
+    frame.render_widget(
+        Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .block(Block::bordered().title(format!(" {} (read only) ", printable_line(title)))),
+        area,
+    );
+}
+
+fn render_chats(
+    frame: &mut Frame,
+    project: &str,
+    purpose: &ChatPurpose,
+    chats: &Chats,
+    selected: usize,
+) {
+    let title = match purpose {
+        ChatPurpose::Open => format!(" chats in {project} "),
+        ChatPurpose::Remove => format!(" delete a chat in {project} "),
+    };
+    let running = chats.running().map(|chat| chat.id.as_str());
+    let items = chats.list.iter().map(|chat| {
+        let mut spans = vec![Span::from(printable_line(&chat.label()))];
+        if running == Some(chat.id.as_str()) {
+            spans.push(Span::from(format!("  {}", chats.state)).fg(Color::Yellow));
+        }
+        ListItem::new(Line::from(spans))
+    });
+    let height = (chats.list.len() as u16 + 2).min(frame.area().height.saturating_sub(4));
+    let area = popup(frame.area(), 90, height);
+    frame.render_widget(Clear, area);
+    render_list(frame, area, &title, items, Some(selected));
 }
 
 fn render_review(frame: &mut Frame, project: &str, lines: &[String]) {
@@ -591,7 +691,16 @@ fn footer_keys(mode: &Mode) -> &'static str {
     match mode {
         Mode::Browse => "[↑] [↓] move   [Enter] select   [?] help   [Esc] quit",
         Mode::Help => "any key: back",
-        Mode::LoadingSnapshots { .. } | Mode::LoadingReview { .. } => "[Esc] cancel",
+        Mode::ChatView { .. } => "[↑] [↓] [PgUp] [PgDn] scroll   [Esc] back to the list",
+        Mode::LoadingSnapshots { .. }
+        | Mode::LoadingReview { .. }
+        | Mode::LoadingChats { .. }
+        | Mode::LoadingChatView { .. } => "[Esc] cancel",
+        Mode::Chats {
+            purpose: ChatPurpose::Open,
+            ..
+        } => "[↑] [↓] move   [Enter] open   [v] read   [Esc] back",
+        Mode::Chats { .. } => "[↑] [↓] move   [Enter] delete   [v] read   [Esc] back",
         Mode::Review { .. } => "[Enter] I checked them   [Esc] later",
         Mode::ProjectMenu { .. } | Mode::Snapshots { .. } => {
             "[↑] [↓] move   [Enter] select   [Esc] back"

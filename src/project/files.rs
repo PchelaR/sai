@@ -4,6 +4,7 @@ use anyhow::{Result, bail, ensure};
 
 use super::content::{self, Check, Selection};
 use super::{Folder, Registry, detach};
+use crate::chat::chats;
 use crate::{attach, mutagen, output, remote, snapshot};
 
 const REMOVE_SKIPPED: &str = include_str!("scripts/remove_skipped.sh");
@@ -63,6 +64,8 @@ pub fn change(
     if old == new {
         return Ok(false);
     }
+    let _lock = super::lock::hold(name)?;
+    chats::ensure_idle(name, registry.get(name)?.agent.unwrap_or_default())?;
     for path in &new {
         ensure!(is_safe(path), "cannot skip {path:?}");
     }

@@ -35,8 +35,12 @@ pub fn run_with_confirmation(name: &str, purge: bool) -> Result<()> {
 
 pub fn run(name: &str, purge: bool) -> Result<()> {
     validate_name(name)?;
+    let _lock = super::lock::hold(name)?;
     let mut registry = Registry::open()?;
     let project = registry.find(name).cloned();
+    if let Some(project) = &project {
+        crate::chat::chats::ensure_idle(name, project.agent.unwrap_or_default())?;
+    }
     if let Some(project) = &project {
         for id in project.session_ids()? {
             mutagen::drop_if_present(&id)?;

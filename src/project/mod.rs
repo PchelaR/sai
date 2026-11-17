@@ -5,6 +5,7 @@ pub mod files;
 pub mod folders;
 mod legacy;
 pub mod list;
+pub mod lock;
 mod registry;
 pub mod remove;
 pub mod rename;
@@ -39,6 +40,7 @@ pub struct Project {
     pub name: String,
     pub agent: Option<Agent>,
     pub retired_agent: Option<String>,
+    pub vps: Option<String>,
     pub folders: Vec<Folder>,
 }
 
@@ -112,6 +114,26 @@ impl Project {
             .filter(|name| {
                 name.strip_prefix(&prefix)
                     .is_some_and(|rest| rest.is_empty() || rest.starts_with("--"))
+            })
+            .collect())
+    }
+
+    pub fn live_sessions(&self) -> Result<Vec<String>> {
+        let names = crate::mutagen::session_names()?;
+        let targets: Vec<String> = self.targets().into_iter().map(|target| target.id).collect();
+        let prefixes: Vec<String> = self
+            .folders
+            .iter()
+            .map(|folder| self.git_prefix(folder))
+            .collect();
+        Ok(names
+            .into_iter()
+            .filter(|name| {
+                targets.contains(name)
+                    || prefixes.iter().any(|prefix| {
+                        name.strip_prefix(prefix.as_str())
+                            .is_some_and(|rest| rest.is_empty() || rest.starts_with("--"))
+                    })
             })
             .collect())
     }

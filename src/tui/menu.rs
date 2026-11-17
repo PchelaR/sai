@@ -70,6 +70,8 @@ impl General {
 #[derive(Clone, Copy)]
 pub enum ProjectItem {
     Chat,
+    NewChat,
+    RemoveChat,
     Shell,
     Folders,
     Change,
@@ -81,8 +83,10 @@ pub enum ProjectItem {
 }
 
 impl ProjectItem {
-    pub const ALL: [ProjectItem; 9] = [
+    pub const ALL: [ProjectItem; 11] = [
         ProjectItem::Chat,
+        ProjectItem::NewChat,
+        ProjectItem::RemoveChat,
         ProjectItem::Shell,
         ProjectItem::Folders,
         ProjectItem::Change,
@@ -96,6 +100,8 @@ impl ProjectItem {
     pub fn command(self) -> &'static str {
         match self {
             ProjectItem::Chat => "chat",
+            ProjectItem::NewChat => "new chat",
+            ProjectItem::RemoveChat => "rm chat",
             ProjectItem::Shell => "shell",
             ProjectItem::Folders => "folders",
             ProjectItem::Change => "change",
@@ -110,6 +116,8 @@ impl ProjectItem {
     pub fn description(self) -> &'static str {
         match self {
             ProjectItem::Chat => "Open the agent",
+            ProjectItem::NewChat => "Start another chat",
+            ProjectItem::RemoveChat => "Delete a chat",
             ProjectItem::Shell => "Bash in the container",
             ProjectItem::Folders => "Choose folders and what to upload",
             ProjectItem::Change => "Switch to another agent",
@@ -124,6 +132,8 @@ impl ProjectItem {
     pub fn key(self) -> char {
         match self {
             ProjectItem::Chat => 'o',
+            ProjectItem::NewChat => 'N',
+            ProjectItem::RemoveChat => 'K',
             ProjectItem::Shell => 's',
             ProjectItem::Folders => 'f',
             ProjectItem::Change => 'c',

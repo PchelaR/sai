@@ -6,6 +6,7 @@ use anyhow::Result;
 use super::content::Selection;
 use super::{Registry, detach, files};
 use crate::agent::Agent;
+use crate::chat::chats;
 use crate::{attach, output};
 
 pub struct Addition {
@@ -68,6 +69,11 @@ fn names<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> String {
 }
 
 pub fn apply(project: &str, agent: Option<Agent>, plan: Plan, git: bool) -> Result<()> {
+    let _lock = super::lock::hold(project)?;
+    if !plan.remove.is_empty() || !plan.change.is_empty() {
+        let bound = Registry::open()?.get(project)?.agent.unwrap_or_default();
+        chats::ensure_idle(project, bound)?;
+    }
     for path in &plan.remove {
         detach::run(project, &path.display().to_string())?;
     }

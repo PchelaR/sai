@@ -19,10 +19,20 @@ pub fn take(name: &str) -> Result<()> {
 }
 
 pub fn take_step(name: &str) -> (&'static str, Vec<String>) {
-    (
-        RUN,
-        vec![tools::snapshots_path(), "take".to_owned(), name.to_owned()],
-    )
+    take_after_upload_step(name, "", &[])
+}
+
+pub fn take_after_upload_step(
+    name: &str,
+    since: &str,
+    uploaded: &[String],
+) -> (&'static str, Vec<String>) {
+    let mut args = vec![tools::snapshots_path(), "take".to_owned(), name.to_owned()];
+    if !since.is_empty() && !uploaded.is_empty() {
+        args.push(since.to_owned());
+        args.extend(uploaded.iter().cloned());
+    }
+    (RUN, args)
 }
 
 pub fn purge(name: &str) -> Result<()> {
@@ -107,6 +117,8 @@ pub fn restore_with_confirmation(
 }
 
 pub fn restore(project: &Project, snapshot: &str, path: Option<&str>) -> Result<()> {
+    let _lock = crate::project::lock::hold(&project.name)?;
+    crate::chat::chats::ensure_idle(&project.name, project.agent.unwrap_or_default())?;
     ensure!(
         project
             .targets()

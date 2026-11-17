@@ -66,29 +66,35 @@ fn event_loop(terminal: &mut DefaultTerminal) -> Result<()> {
             terminal.draw(|frame| view::render(frame, &app))?;
             dirty = false;
         }
-        if !event::poll(TICK)? {
-            continue;
-        }
-        let key = match event::read()? {
-            Event::Key(key) => key,
-            Event::Mouse(mouse) => {
-                if mouse.kind != MouseEventKind::Moved {
-                    app.mouse(mouse);
-                    dirty = true;
+        let outcome = match app.pending.take() {
+            Some(outcome) => Some(outcome),
+            None => {
+                if !event::poll(TICK)? {
+                    continue;
                 }
-                continue;
+                let key = match event::read()? {
+                    Event::Key(key) => key,
+                    Event::Mouse(mouse) => {
+                        if mouse.kind != MouseEventKind::Moved {
+                            app.mouse(mouse);
+                            dirty = true;
+                        }
+                        continue;
+                    }
+                    Event::Resize(..) | Event::FocusGained => {
+                        dirty = true;
+                        continue;
+                    }
+                    _ => continue,
+                };
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+                app.handle(key)
             }
-            Event::Resize(..) | Event::FocusGained => {
-                dirty = true;
-                continue;
-            }
-            _ => continue,
         };
-        if key.kind != KeyEventKind::Press {
-            continue;
-        }
         dirty = true;
-        match app.handle(key) {
+        match outcome {
             Some(Outcome::Quit) => return Ok(()),
             Some(Outcome::Refresh) => {
                 progress = None;

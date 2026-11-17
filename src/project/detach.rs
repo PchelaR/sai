@@ -4,11 +4,13 @@ use anyhow::{Context, Result};
 use dialoguer::Confirm;
 
 use super::{Folder, Project, Registry, local_path, same_path};
+use crate::chat::chats;
 use crate::{mutagen, output, remote, snapshot};
 
 const DETACH: &str = include_str!("scripts/detach.sh");
 
 pub fn run_with_confirmation(name: &str, dir_path: &str) -> Result<()> {
+    let _lock = super::lock::hold(name)?;
     let mut registry = Registry::open()?;
     let project = registry.get(name)?.clone();
     let folder = find(&project, dir_path)?;
@@ -27,6 +29,7 @@ pub fn run_with_confirmation(name: &str, dir_path: &str) -> Result<()> {
 }
 
 pub fn run(name: &str, dir_path: &str) -> Result<()> {
+    let _lock = super::lock::hold(name)?;
     let mut registry = Registry::open()?;
     let project = registry.get(name)?.clone();
     let folder = find(&project, dir_path)?;
@@ -57,6 +60,7 @@ pub fn find(project: &Project, dir_path: &str) -> Result<Folder> {
 
 fn detach(registry: &mut Registry, project: &Project, folder: &Folder) -> Result<()> {
     let name = project.name.as_str();
+    chats::ensure_idle(name, project.agent.unwrap_or_default())?;
     let target = project.target(folder);
     mutagen::finish(&target.id)?;
     for id in project.git_session_ids(folder)? {

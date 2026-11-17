@@ -5,7 +5,7 @@ use std::thread;
 use anyhow::Result;
 use ratatui::DefaultTerminal;
 
-use crate::agent::Agent;
+use crate::agent::{Agent, Start};
 use crate::project::folders::{self, Plan};
 use crate::project::{Registry, change, remove, rename, stop};
 use crate::{chat, doctor, logs, output, reset, shell, snapshot, update, upgrade};
@@ -16,7 +16,7 @@ pub enum Action {
 }
 
 pub enum Session {
-    Chat(String),
+    Chat(String, Start),
     Shell(String),
     Vps,
 }
@@ -27,6 +27,11 @@ pub enum Task {
         agent: Option<Agent>,
         plan: Plan,
         git: bool,
+    },
+    RemoveChat {
+        project: String,
+        agent: Agent,
+        chat: String,
     },
     Change(String, Agent),
     Rename {
@@ -60,6 +65,7 @@ impl Task {
         match self {
             Task::Folders { project, .. } => format!("folders {project}"),
             Task::Change(project, agent) => format!("change {agent} {project}"),
+            Task::RemoveChat { project, .. } => format!("rm chat in {project}"),
             Task::Rename { project, name } => format!("rename {project} {name}"),
             Task::Restore { snapshot, .. } => format!("restore {snapshot}"),
             Task::Stop(name) => format!("stop {name}"),
@@ -77,7 +83,7 @@ impl Task {
 pub fn open(terminal: &mut DefaultTerminal, session: Session) -> Result<()> {
     super::restore();
     let result = match session {
-        Session::Chat(project) => chat::run(Some(&project), None),
+        Session::Chat(project, start) => chat::run(Some(&project), None, start),
         Session::Shell(project) => shell::run(Some(&project)),
         Session::Vps => shell::vps(),
     };
@@ -115,6 +121,11 @@ fn execute(task: Task) -> Result<()> {
             git,
         } => folders::apply(&project, agent, plan, git),
         Task::Change(project, agent) => change::run(Some(&project), agent),
+        Task::RemoveChat {
+            project,
+            agent,
+            chat,
+        } => chat::chats::remove(&project, agent, &chat),
         Task::Rename { project, name } => rename::run(&project, &name),
         Task::Restore {
             project,

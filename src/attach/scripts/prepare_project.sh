@@ -7,5 +7,14 @@ if [ ! -f "$marker" ]; then
   exit 1
 fi
 
+mkdir -p "$HOME/.sai"
+if [ ! -s "$HOME/.sai/id" ]; then
+  od -An -N16 -tx1 /dev/urandom | tr -d ' \n' > "$HOME/.sai/id"
+fi
+printf 'vps\t%s\n' "$(cat "$HOME/.sai/id")"
+printf 'now\t%s\n' "$(date -u +%Y%m%dT%H%M%SZ)"
+if [ -d "$workspace" ]; then
+  printf 'existed\n'
+fi
 mkdir -p "$workspace"
-docker container inspect -f '{{ index .Config.Labels "sai.agent" }}' "$container" 2>/dev/null || true
+printf 'agent\t%s\n' "$(docker container inspect -f '{{ index .Config.Labels "sai.agent" }}' "$container" 2>/dev/null || true)"

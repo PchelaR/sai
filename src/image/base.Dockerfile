@@ -26,8 +26,13 @@ RUN git clone --depth 1 https://github.com/pyenv/pyenv.git "$PYENV_ROOT" \
 
 RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal -c clippy -c rustfmt
 
+RUN curl -LsSf https://astral.sh/uv/install.sh \
+    | env UV_INSTALL_DIR=/home/agent/.local/bin INSTALLER_NO_MODIFY_PATH=1 sh
+
 ENV LANG=C.UTF-8 \
-    TERM=xterm-256color
+    TERM=xterm-256color \
+    UV_CACHE_DIR=/state/uv \
+    UV_LINK_MODE=copy
 
 WORKDIR /workspace
 

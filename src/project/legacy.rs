@@ -43,6 +43,7 @@ pub fn migrate(registry: &mut Registry) -> Result<()> {
             agent: Agent::parse(label),
             retired_agent: (!label.is_empty() && Agent::parse(label).is_none())
                 .then(|| label.to_owned()),
+            vps: None,
             folders: vec![Folder {
                 name: folder.clone(),
                 path,

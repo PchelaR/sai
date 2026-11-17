@@ -21,6 +21,8 @@ struct Stored {
 struct StoredProject {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    vps: Option<String>,
     #[serde(default)]
     folders: Vec<StoredFolder>,
 }
@@ -65,6 +67,7 @@ impl Registry {
                 let project = Project {
                     agent: project.agent.as_deref().and_then(Agent::parse),
                     retired_agent,
+                    vps: project.vps,
                     folders: project
                         .folders
                         .into_iter()
@@ -94,6 +97,7 @@ impl Registry {
                             .agent
                             .map(|agent| agent.name().to_owned())
                             .or_else(|| project.retired_agent.clone()),
+                        vps: project.vps.clone(),
                         folders: project
                             .folders
                             .iter()
@@ -167,6 +171,7 @@ impl Registry {
                 name: name.to_owned(),
                 agent: Some(agent),
                 retired_agent: None,
+                vps: None,
                 folders: Vec::new(),
             },
         );
@@ -251,6 +256,14 @@ impl Registry {
             .find(|folder| same_path(&folder.path, path))
             .with_context(|| format!("{} is not attached to {project}", path.display()))?;
         folder.skip = skip;
+        Ok(())
+    }
+
+    pub fn set_vps(&mut self, project: &str, vps: &str) -> Result<()> {
+        self.projects
+            .get_mut(project)
+            .with_context(|| format!("no project named {project}"))?
+            .vps = Some(vps.to_owned());
         Ok(())
     }
 

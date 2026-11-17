@@ -108,6 +108,17 @@ fn wait_before_retry(attempt: u32) {
     thread::sleep(RETRY_DELAY);
 }
 
+pub fn probe(script: &str, args: &[&str]) -> Option<String> {
+    let output = spawn(first_line(script), script, args)
+        .ok()?
+        .wait_with_output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| output::printable(&String::from_utf8_lossy(&output.stdout)))
+}
+
 pub fn output(script: &str, args: &[&str]) -> Result<String> {
     output_named(first_line(script), script, args)
 }

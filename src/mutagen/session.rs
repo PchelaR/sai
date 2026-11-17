@@ -73,7 +73,27 @@ struct Problem {
 
 impl Session {
     pub fn local_path(&self) -> &str {
-        &self.alpha.path
+        &self.local().path
+    }
+
+    fn agent_wins(&self) -> bool {
+        self.mode == super::TWO_WAY
+    }
+
+    fn local(&self) -> &Endpoint {
+        if self.agent_wins() {
+            &self.beta
+        } else {
+            &self.alpha
+        }
+    }
+
+    fn vps(&self) -> &Endpoint {
+        if self.agent_wins() {
+            &self.alpha
+        } else {
+            &self.beta
+        }
     }
 
     pub fn progress(&self) -> String {
@@ -114,7 +134,7 @@ impl Session {
             .last_error
             .iter()
             .map(|error| format!("sync error: {error}"));
-        let disconnected = [("local folder", &self.alpha), ("VPS", &self.beta)]
+        let disconnected = [("local folder", self.local()), ("VPS", self.vps())]
             .into_iter()
             .filter(|(_, endpoint)| !self.paused && !endpoint.connected)
             .map(|(side, _)| format!("sync is not connected to the {side}"));
@@ -124,7 +144,7 @@ impl Session {
                 conflict.root
             )
         });
-        let problems = [("local", &self.alpha), ("VPS", &self.beta)]
+        let problems = [("local", self.local()), ("VPS", self.vps())]
             .into_iter()
             .flat_map(|(side, endpoint)| {
                 endpoint
@@ -151,6 +171,22 @@ mod tests {
     use super::Session;
 
     const WATCHING: &str = r#"{"name":"sai-app","paused":false,"status":"watching","ignore":{"paths":["target/"],"vcs":true},"alpha":{"connected":true},"beta":{"connected":true},"successfulCycles":4}"#;
+
+    #[test]
+    fn knows_which_side_is_the_vps() {
+        let agent_wins: Session = serde_json::from_str(
+            r#"{"name":"sai-app","mode":"two-way-resolved","status":"connecting-alpha","alpha":{"path":"/home/sai/projects/app/front","connected":false},"beta":{"path":"/code/front","connected":true}}"#,
+        )
+        .unwrap();
+        assert_eq!(agent_wins.local_path(), "/code/front");
+        assert_eq!(agent_wins.issues(), ["sync is not connected to the VPS"]);
+        let local_wins: Session = serde_json::from_str(
+            r#"{"name":"sai-app","mode":"two-way-safe","alpha":{"path":"/code/front","connected":true},"beta":{"connected":false}}"#,
+        )
+        .unwrap();
+        assert_eq!(local_wins.local_path(), "/code/front");
+        assert_eq!(local_wins.issues(), ["sync is not connected to the VPS"]);
+    }
 
     #[test]
     fn parses_empty_session_lists() {

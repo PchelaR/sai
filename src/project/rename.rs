@@ -7,6 +7,8 @@ const RENAME: &str = include_str!("scripts/rename.sh");
 
 pub fn run(old: &str, new: &str) -> Result<()> {
     validate_name(new)?;
+    let _lock = super::lock::hold(old)?;
+    let _new = super::lock::hold(new)?;
     let mut registry = Registry::open()?;
     let project = registry.get(old)?.clone();
     ensure!(registry.find(new).is_none(), "project {new} already exists");

@@ -18,7 +18,8 @@ use crate::{secrets, ssh};
 
 const LIST_TEMPLATE: &str = "{{ json . }}";
 const MIRROR: &str = "one-way-replica";
-const TWO_WAY: &str = "two-way-safe";
+const TWO_WAY: &str = "two-way-resolved";
+const LOCAL_WINS: &str = "two-way-safe";
 const GIT_IGNORES: &[&str] = &[
     "/config",
     "/hooks/",
@@ -28,6 +29,8 @@ const GIT_IGNORES: &[&str] = &[
     "*.lock",
 ];
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(2);
+const FLUSH_BEFORE_PAUSE: Duration = Duration::from_secs(15);
+const SAI_PREFIX: &str = "sai-";
 const REPEAT_AFTER: Duration = Duration::from_secs(20);
 
 pub fn ensure_installed() -> Result<()> {
@@ -66,6 +69,10 @@ fn parse_sessions(output: &str) -> Result<Vec<Session>> {
     Ok(sessions.unwrap_or_default())
 }
 
+pub fn needs_upload(target: &SyncTarget) -> Result<bool> {
+    Ok(session(&target.id)?.is_none_or(|session| session.mode == MIRROR))
+}
+
 pub fn sync(target: &SyncTarget) -> Result<()> {
     let ignores = ignores(target)?;
     let Some(session) = session(&target.id)? else {
@@ -84,6 +91,11 @@ pub fn sync(target: &SyncTarget) -> Result<()> {
     }
     if session.paused {
         run(&["sync", "resume", &target.id])?;
+    }
+    if session.mode == LOCAL_WINS {
+        flush(&target.id)?;
+        terminate(&target.id)?;
+        return create(target, TWO_WAY, &ignores);
     }
     if session.ignore.paths != ignores {
         output::step(&format!(
@@ -156,6 +168,54 @@ pub fn report_issues(id: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+pub fn pause_all() -> Result<()> {
+    if !install::is_installed() {
+        return Ok(());
+    }
+    let names: Vec<String> = sessions()?
+        .into_iter()
+        .filter(|session| session.name.starts_with(SAI_PREFIX) && !session.paused)
+        .map(|session| session.name)
+        .collect();
+    if names.is_empty() {
+        return Ok(());
+    }
+    let mut flush = command()?
+        .args(["sync", "flush"])
+        .args(&names)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let started = Instant::now();
+    while flush.try_wait()?.is_none() {
+        if started.elapsed() > FLUSH_BEFORE_PAUSE {
+            flush.kill().ok();
+            break;
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+    let mut args = vec!["sync".to_owned(), "pause".to_owned()];
+    args.extend(names);
+    run(&args).map(|_| ())
+}
+
+pub fn resume_all() -> Result<()> {
+    if !install::is_installed() {
+        return Ok(());
+    }
+    let names: Vec<String> = sessions()?
+        .into_iter()
+        .filter(|session| session.name.starts_with(SAI_PREFIX) && session.paused)
+        .map(|session| session.name)
+        .collect();
+    if names.is_empty() {
+        return Ok(());
+    }
+    let mut args = vec!["sync".to_owned(), "resume".to_owned()];
+    args.extend(names);
+    run(&args).map(|_| ())
 }
 
 pub fn pause(id: &str) -> Result<()> {
@@ -244,8 +304,13 @@ fn create(target: &SyncTarget, mode: &str, ignores: &[String]) -> Result<()> {
         "--symlink-mode=portable".to_owned(),
     ];
     args.extend(ignores.iter().map(|pattern| format!("--ignore={pattern}")));
-    args.push(target.local.display().to_string());
-    args.push(format!("{HOST_ALIAS}:{}", target.remote));
+    let local = target.local.display().to_string();
+    let vps = format!("{HOST_ALIAS}:{}", target.remote);
+    if mode == TWO_WAY {
+        args.extend([vps, local]);
+    } else {
+        args.extend([local, vps]);
+    }
     run(&args).map(|_| ())
 }
 

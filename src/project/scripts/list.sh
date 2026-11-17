@@ -1,4 +1,15 @@
-docker ps -a --filter label=sai.project --format 'container	{{.Label "sai.project"}}	{{.State}}'
+mkdir -p "$HOME/.sai"
+if [ ! -s "$HOME/.sai/id" ]; then
+  od -An -N16 -tx1 /dev/urandom | tr -d ' \n' > "$HOME/.sai/id"
+fi
+printf 'vps\t%s\n' "$(cat "$HOME/.sai/id")"
+docker ps -a --filter label=sai.project --format '{{.Label "sai.project"}}	{{.State}}	{{.Label "sai.agent"}}' \
+  | while IFS=$'\t' read -r project state agent; do
+      if [ "$state" = running ] && [ -n "$agent" ]; then
+        state=$(agent_state "sai-$project" "$agent")
+      fi
+      printf 'container\t%s\t%s\n' "$project" "$state"
+    done
 for file in "$HOME"/snapshots/*/.meta/watched; do
   if [ -f "$file" ]; then
     meta=$(dirname "$file")

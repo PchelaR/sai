@@ -2,13 +2,18 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 
-use super::Registry;
+use super::{Project, Registry};
 use crate::{mutagen, remote};
 
-const LIST: &str = include_str!("scripts/list.sh");
+const LIST: &str = concat!(
+    include_str!("../chat/agent_state.sh"),
+    include_str!("scripts/list.sh")
+);
 const NOT_SYNCING: &str = "not syncing";
 const NO_CONTAINER: &str = "-";
 const ONLY_ON_VPS: &str = "only on VPS";
+const OTHER_VPS: &str = "other VPS";
+const BUSY: &[&str] = &["working", "asking"];
 
 #[derive(Clone)]
 pub struct FolderRow {
@@ -39,10 +44,12 @@ pub struct Row {
     pub state: String,
     pub sync: String,
     pub review: usize,
+    pub busy: bool,
     pub folders: Vec<FolderRow>,
 }
 
 struct Listing<'a> {
+    vps: Option<&'a str>,
     states: HashMap<&'a str, &'a str>,
     on_vps: Vec<&'a str>,
     reviews: HashMap<&'a str, usize>,
@@ -58,6 +65,35 @@ pub fn load() -> Result<Vec<Row>> {
         .collect();
     let mut rows = Vec::new();
     for project in registry.projects() {
+        if on_other_vps(project, &listing)? {
+            for id in project.live_sessions()? {
+                mutagen::drop_if_present(&id)?;
+            }
+            rows.push(Row {
+                only_on_vps: false,
+                name: project.name.clone(),
+                agent: project
+                    .agent
+                    .map(|agent| agent.to_string())
+                    .unwrap_or_default(),
+                state: OTHER_VPS.to_owned(),
+                sync: "uploaded here on the next chat".to_owned(),
+                review: 0,
+                busy: false,
+                folders: project
+                    .folders
+                    .iter()
+                    .map(|folder| FolderRow {
+                        name: folder.name.clone(),
+                        path: folder.path.display().to_string(),
+                        sync: NOT_SYNCING.to_owned(),
+                        git: folder.git,
+                        skipped: folder.skip.len(),
+                    })
+                    .collect(),
+            });
+            continue;
+        }
         let mut folders = Vec::new();
         for folder in &project.folders {
             let sync = syncs
@@ -80,11 +116,16 @@ pub fn load() -> Result<Vec<Row>> {
                 .map(|agent| agent.to_string())
                 .or_else(|| project.retired_agent.clone())
                 .unwrap_or_default(),
-            state: listing
+            state: describe_state(
+                listing
+                    .states
+                    .get(project.name.as_str())
+                    .unwrap_or(&NO_CONTAINER),
+            ),
+            busy: listing
                 .states
                 .get(project.name.as_str())
-                .unwrap_or(&NO_CONTAINER)
-                .to_string(),
+                .is_some_and(|state| BUSY.contains(state)),
             sync: summary(&folders),
             review: listing
                 .reviews
@@ -103,6 +144,7 @@ pub fn load() -> Result<Vec<Row>> {
                 state: ONLY_ON_VPS.to_owned(),
                 sync: "Enter: attach a folder".to_owned(),
                 review: 0,
+                busy: false,
                 folders: Vec::new(),
             });
         }
@@ -112,6 +154,7 @@ pub fn load() -> Result<Vec<Row>> {
 
 fn parse(output: &str) -> Listing<'_> {
     let mut listing = Listing {
+        vps: None,
         states: HashMap::new(),
         on_vps: Vec::new(),
         reviews: HashMap::new(),
@@ -123,6 +166,7 @@ fn parse(output: &str) -> Listing<'_> {
                 listing.states.insert(*name, *state);
             }
             ["files", name] => listing.on_vps.push(*name),
+            ["vps", id] => listing.vps = Some(id.trim()),
             ["review", name, count] => {
                 listing
                     .reviews
@@ -176,6 +220,29 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
+fn on_other_vps(project: &Project, listing: &Listing) -> Result<bool> {
+    let Some(vps) = listing.vps else {
+        return Ok(false);
+    };
+    Ok(match &project.vps {
+        Some(own) => own != vps,
+        None => {
+            !listing.on_vps.contains(&project.name.as_str()) && !project.live_sessions()?.is_empty()
+        }
+    })
+}
+
+fn describe_state(state: &str) -> String {
+    match state {
+        "working" => "working",
+        "asking" => "asks you",
+        "waiting" => "your turn",
+        "idle" => "ready",
+        other => other,
+    }
+    .to_owned()
+}
+
 fn summary(folders: &[FolderRow]) -> String {
     let mut states: Vec<&str> = folders.iter().map(|folder| folder.sync.as_str()).collect();
     states.dedup();
@@ -201,6 +268,7 @@ mod tests {
         assert_eq!(listing.states.get("shop"), Some(&"running"));
         assert_eq!(listing.on_vps, ["shop", "old"]);
         assert_eq!(listing.reviews.get("shop"), Some(&2));
+        assert_eq!(parse("vps\tabc123\n").vps, Some("abc123"));
     }
 
     fn folder(name: &str, sync: &str) -> FolderRow {

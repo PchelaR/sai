@@ -38,6 +38,7 @@ pub fn run(
     choose: &Choose,
     approve_git: &dyn Fn(&Path, &[PathBuf]) -> Result<bool>,
 ) -> Result<()> {
+    let _lock = project::lock::hold(name)?;
     let mut registry = Registry::open()?;
     let Some((folder, path)) = register(
         &mut registry,
@@ -161,6 +162,7 @@ pub fn current_folder(
 }
 
 pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> Result<Attached> {
+    let _lock = project::lock::hold(name)?;
     let config = Config::load()?;
     ssh::install_host_alias(&config)?;
     mutagen::ensure_installed()?;
@@ -168,7 +170,7 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
     let remote_path = project::remote_path(name);
 
     output::step("Preparing the VPS");
-    let label = remote::output_all(
+    let prepared = remote::output_all(
         "prepare the project",
         &[
             (
@@ -178,9 +180,11 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
             tools::install_step(&config::instructions()?, &config.agents)?,
         ],
     )?;
+    let prepared = Prepared::parse(&prepared);
+    let label = prepared.agent.as_str();
+    forget_other_vps(registry, name, &prepared)?;
     let project = registry.get(name)?.clone();
     let retired = project.retired_agent.clone().or_else(|| {
-        let label = label.trim();
         (project.agent.is_none() && !label.is_empty() && Agent::parse(label).is_none())
             .then(|| label.to_owned())
     });
@@ -189,16 +193,18 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
             "{name} used {old}, which sai no longer supports. Switch it with `sai change claude {name}` or `sai change codex {name}`, your files stay as they are"
         );
     }
-    let agent = choose_agent(
-        name,
-        requested,
-        project.agent.or(Agent::parse(label.trim())),
-    )?;
+    let agent = choose_agent(name, requested, project.agent.or(Agent::parse(label)))?;
     if project.agent != Some(agent) {
         registry.set_agent(name, agent)?;
         registry.save()?;
     }
 
+    let fresh: Vec<String> = project
+        .folders
+        .iter()
+        .filter(|folder| mutagen::needs_upload(&project.target(folder)).unwrap_or(true))
+        .map(|folder| folder.name.clone())
+        .collect();
     for target in project.targets() {
         mutagen::sync(&target)?;
     }
@@ -219,7 +225,11 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
     let mut secret_args = vec![remote_path.as_str()];
     secret_args.extend(secrets::names());
     steps.push((REMOVE_SECRETS, owned(&secret_args)));
-    steps.push(snapshot::take_step(name));
+    steps.push(snapshot::take_after_upload_step(
+        name,
+        &prepared.now,
+        &fresh,
+    ));
     let image = image::agent(agent);
     steps.push((
         ENSURE_IMAGE,
@@ -228,6 +238,7 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
             &image,
             &image::encoded_agent(agent),
             agent.name(),
+            &image::encoded_base(),
         ]),
     ));
     let mounts = tools::read_only_mounts(agent);
@@ -398,6 +409,57 @@ pub fn ensure_room(path: &Path, size: u64) -> Result<()> {
     Ok(())
 }
 
+struct Prepared {
+    vps: String,
+    now: String,
+    existed: bool,
+    agent: String,
+}
+
+impl Prepared {
+    fn parse(text: &str) -> Self {
+        let mut prepared = Prepared {
+            vps: String::new(),
+            now: String::new(),
+            existed: false,
+            agent: String::new(),
+        };
+        for line in text.lines() {
+            match line.split_once('\t') {
+                Some(("vps", id)) => prepared.vps = id.trim().to_owned(),
+                Some(("now", stamp)) => prepared.now = stamp.trim().to_owned(),
+                Some(("agent", agent)) => prepared.agent = agent.trim().to_owned(),
+                _ if line.trim() == "existed" => prepared.existed = true,
+                _ => {}
+            }
+        }
+        prepared
+    }
+}
+
+fn forget_other_vps(registry: &mut Registry, name: &str, prepared: &Prepared) -> Result<()> {
+    ensure!(!prepared.vps.is_empty(), "the VPS did not report its id");
+    let project = registry.get(name)?.clone();
+    if project.vps.as_deref() == Some(prepared.vps.as_str()) {
+        return Ok(());
+    }
+    let live = project.live_sessions()?;
+    let moved = match &project.vps {
+        Some(_) => true,
+        None => !prepared.existed && !live.is_empty(),
+    };
+    if moved {
+        output::warning(&format!(
+            "{name} was on another VPS. sai drops its old sync and uploads the folders here from your computer, local files are not touched"
+        ));
+        for id in &live {
+            mutagen::drop_if_present(id)?;
+        }
+    }
+    registry.set_vps(name, &prepared.vps)?;
+    registry.save()
+}
+
 fn choose_agent(name: &str, requested: Option<Agent>, bound: Option<Agent>) -> Result<Agent> {
     match (requested, bound) {
         (Some(requested), Some(bound)) if requested != bound => {
@@ -411,6 +473,19 @@ fn choose_agent(name: &str, requested: Option<Agent>, bound: Option<Agent>) -> R
 mod tests {
     use super::choose_agent;
     use crate::agent::Agent;
+
+    #[test]
+    fn reads_what_the_vps_reports() {
+        let prepared =
+            super::Prepared::parse("vps\tab12\nnow\t20261117T090000Z\nexisted\nagent\tclaude\n");
+        assert_eq!(prepared.vps, "ab12");
+        assert_eq!(prepared.now, "20261117T090000Z");
+        assert!(prepared.existed);
+        assert_eq!(prepared.agent, "claude");
+        let fresh = super::Prepared::parse("vps\tcd34\nagent\t\n");
+        assert!(!fresh.existed);
+        assert!(fresh.agent.is_empty());
+    }
 
     #[test]
     fn uses_the_default_for_new_projects() {
