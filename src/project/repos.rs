@@ -29,6 +29,14 @@ pub fn label(relative: &Path) -> String {
     }
 }
 
+/// Where the repository's .git lies inside the folder on the VPS
+pub fn git_dir(relative: &Path) -> String {
+    match label(relative).as_str() {
+        "." => GIT_DIR.to_owned(),
+        label => format!("{label}/{GIT_DIR}"),
+    }
+}
+
 pub fn suffix(relative: &Path) -> String {
     if relative.as_os_str().is_empty() {
         return String::new();
@@ -54,7 +62,16 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use super::{find, label, suffix};
+    use super::{find, git_dir, label, suffix};
+
+    #[test]
+    fn places_git_dirs_inside_the_folder() {
+        assert_eq!(git_dir(Path::new("")), ".git");
+        assert_eq!(
+            git_dir(&PathBuf::from("libs").join("core")),
+            "libs/core/.git"
+        );
+    }
 
     #[test]
     fn finds_nested_repositories() {

@@ -1,7 +1,9 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
+use dialoguer::{Confirm, Select};
 
 use crate::agent::Agent;
 use crate::config::{self, Config};
@@ -19,6 +21,7 @@ const ENSURE_IMAGE: &str = concat!(
 const ENSURE_CONTAINER: &str = include_str!("scripts/ensure_container.sh");
 const FREE_SPACE: &str = include_str!("scripts/free_space.sh");
 const GIT_CONFIG: &str = include_str!("scripts/git_config.sh");
+const OLD_CHATS: &str = include_str!("scripts/old_chats.sh");
 const SHOWN_REPOS: usize = 8;
 const GIT_WARNING: &str = "If secrets were ever committed, the agent can read them in the history";
 const RESERVE: u64 = 2 * 1024 * 1024 * 1024;
@@ -113,6 +116,7 @@ pub fn register(
                     path: path.clone(),
                     git,
                     skip,
+                    history: Vec::new(),
                 },
             )?;
             registry.save()?;
@@ -151,6 +155,7 @@ pub fn current_folder(
             path: path.clone(),
             git,
             skip,
+            history: Vec::new(),
         },
     )?;
     registry.save()?;
@@ -213,6 +218,7 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
         mutagen::sync_git(target)?;
     }
     drop_stale_git(&project, &git_targets)?;
+    history_notice(registry, &project)?;
     let owned = |args: &[&str]| args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
     let mut steps = Vec::new();
     if !git_targets.is_empty() {
@@ -251,6 +257,7 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
         spec.as_str(),
         agent.name(),
         agent.login_files(),
+        agent.setting_files(),
     ]);
     container_args.extend(mounts);
     steps.push((ENSURE_CONTAINER, container_args));
@@ -262,6 +269,66 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
     }
     let project = registry.get(name)?.clone();
     Ok(Attached { project, agent })
+}
+
+/// sai before 0.1.9 kept the chats of all projects in one Docker volume per agent, and
+/// the upgrade left them there. Nobody knows which chat belongs to which project, so the
+/// user decides once: move them into this project, or delete them. Asks in the terminal,
+/// so only `sai chat` calls it, never a task running under the menu
+pub fn old_chats(name: &str, agent: Agent) -> Result<()> {
+    if !std::io::stdin().is_terminal() {
+        return Ok(());
+    }
+    let image = image::agent(agent);
+    let image = image.as_str();
+    let listing = remote::output(OLD_CHATS, &["list", image, agent.name(), name])?;
+    for line in listing.lines() {
+        let fields: Vec<&str> = line.split('\t').collect();
+        let ["volume", owner, count] = fields[..] else {
+            continue;
+        };
+        let count: usize = count.trim().parse().unwrap_or_default();
+        match Agent::parse(owner) {
+            None => {
+                let delete = Confirm::new()
+                    .with_prompt(format!(
+                        "The VPS still keeps the data of {owner} ({count} chats), sai no longer supports it. Delete it?"
+                    ))
+                    .default(false)
+                    .interact()?;
+                if delete {
+                    remote::run(OLD_CHATS, &["delete", image, owner, name])?;
+                }
+            }
+            Some(other) if other != agent => {}
+            Some(_) if count == 0 => {
+                remote::run(OLD_CHATS, &["delete", image, owner, name])?;
+            }
+            Some(_) => {
+                let options = vec![
+                    format!("Move them into {name}"),
+                    "Delete them".to_owned(),
+                    "Ask me next time".to_owned(),
+                ];
+                let choice = Select::new()
+                    .with_prompt(format!(
+                        "{count} {agent} chats from an older sai are kept on the VPS, from all your projects together. Move them into {name}? Its agent will see all of them"
+                    ))
+                    .items(&options)
+                    .default(2)
+                    .interact()?;
+                match choice {
+                    0 => {
+                        remote::run(OLD_CHATS, &["move", image, owner, name])?;
+                        output::info(&format!("Moved, they are in the chat list of {name}"));
+                    }
+                    1 => remote::run(OLD_CHATS, &["delete", image, owner, name])?,
+                    _ => {}
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn ask_new_items(path: &Path) -> Result<Option<Selection>> {
@@ -314,23 +381,71 @@ fn wants_git(path: &Path, approve_git: &dyn Fn(&Path, &[PathBuf]) -> Result<bool
     Ok(!found.is_empty() && approve_git(path, &found)?)
 }
 
-fn drop_stale_git(project: &Project, current: &[SyncTarget]) -> Result<()> {
+/// Stops uploading the history the agent should no longer get (a repository the user
+/// stopped uploading or did not pick) and deletes its copy on the VPS, so the agent
+/// cannot keep reading it
+pub fn drop_stale_git(project: &Project, current: &[SyncTarget]) -> Result<()> {
+    let current: HashSet<&str> = current.iter().map(|target| target.id.as_str()).collect();
     for folder in &project.folders {
-        for id in project.git_session_ids(folder)? {
-            if !current.iter().any(|target| target.id == id) {
-                mutagen::drop_if_present(&id)?;
-            }
+        let stale: HashSet<String> = project
+            .git_session_ids(folder)?
+            .into_iter()
+            .filter(|id| !current.contains(id.as_str()))
+            .collect();
+        if stale.is_empty() {
+            continue;
         }
-        if folder.git && repos::find(&folder.path).len() > repos::LIMIT {
-            output::warning(&format!(
-                "{} has more than {} git repositories, the agent gets the history of the first {} only",
-                folder.path.display(),
-                repos::LIMIT,
-                repos::LIMIT
-            ));
+        let copies: Vec<String> = repos::find(&folder.path)
+            .iter()
+            .filter(|relative| stale.contains(&project.git_target(folder, relative).id))
+            .map(|relative| repos::git_dir(relative))
+            .collect();
+        for id in &stale {
+            mutagen::drop_if_present(id)?;
         }
+        project::files::remove_remote(&project.target(folder).remote, &copies)?;
     }
     Ok(())
+}
+
+/// Tells once which repositories get history when a folder has more than repos::LIMIT:
+/// the default pick is saved, so the next chats stay quiet until the user changes it
+fn history_notice(registry: &mut Registry, project: &Project) -> Result<()> {
+    let mut changed = false;
+    for folder in project.folders.iter().filter(|folder| folder.git) {
+        let found = folder.repos();
+        if found.len() <= repos::LIMIT || !folder.history.is_empty() {
+            continue;
+        }
+        let labels: Vec<String> = found
+            .iter()
+            .map(|relative| repos::label(relative))
+            .collect();
+        let (picked, rest) = labels.split_at(repos::LIMIT);
+        output::warning(&format!(
+            "{} has {} git repositories, the agent gets the history of {} of them: {}. Without history: {}. Choose which with `sai history {}` (in the menu: h)",
+            folder.path.display(),
+            labels.len(),
+            repos::LIMIT,
+            shorten(picked),
+            shorten(rest),
+            project.name
+        ));
+        registry.set_history(&project.name, &folder.path, picked.to_vec())?;
+        changed = true;
+    }
+    if changed {
+        registry.save()?;
+    }
+    Ok(())
+}
+
+fn shorten(labels: &[String]) -> String {
+    let mut shown: Vec<String> = labels.iter().take(SHOWN_REPOS).cloned().collect();
+    if labels.len() > SHOWN_REPOS {
+        shown.push(format!("and {} more", labels.len() - SHOWN_REPOS));
+    }
+    shown.join(", ")
 }
 
 pub fn ask_git(path: &Path, found: &[PathBuf]) -> Result<bool> {
@@ -372,7 +487,10 @@ pub fn git_question(path: &Path, found: &[PathBuf]) -> String {
         names.push(format!("and {} more", found.len() - SHOWN_REPOS));
     }
     let limit = if found.len() > repos::LIMIT {
-        format!(" Only the first {} get history.", repos::LIMIT)
+        format!(
+            " The agent gets the history of {} of them, you can choose which later with `sai history`.",
+            repos::LIMIT
+        )
     } else {
         String::new()
     };

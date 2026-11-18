@@ -1,4 +1,5 @@
 use base64::{Engine, prelude::BASE64_STANDARD};
+use clap::ValueEnum;
 
 use crate::agent::Agent;
 use crate::fingerprint;
@@ -13,6 +14,14 @@ pub fn base() -> String {
 pub fn agent(agent: Agent) -> String {
     let dockerfiles = format!("{BASE_DOCKERFILE}{}", agent.dockerfile());
     format!("sai-{agent}:{}", fingerprint::of(&dockerfiles))
+}
+
+/// Images this sai runs, so an older sai can tell whether an upgrade rebuilds them
+pub fn print_tags() {
+    println!("{}", base());
+    for agent in Agent::value_variants() {
+        println!("{}", self::agent(*agent));
+    }
 }
 
 pub fn encoded_base() -> String {

@@ -74,19 +74,39 @@ pub fn change(
     let target = project.target(folder);
     mutagen::finish(&target.id)?;
     snapshot::take(name)?;
+    // Repositories in folders that stop uploading lose their history on the VPS too,
+    // before the folders are deleted there, or the git sync would bring them back
+    let mut updated = project.clone();
+    if let Some(changed) = updated
+        .folders
+        .iter_mut()
+        .find(|changed| super::same_path(&changed.path, &folder.path))
+    {
+        changed.skip = selection.skip.clone();
+    }
+    attach::drop_stale_git(&updated, &updated.git_targets())?;
     let removed: Vec<&str> = new
         .iter()
         .filter(|path| content::check(path, &old) != Check::Off)
         .map(String::as_str)
         .collect();
-    if !removed.is_empty() {
-        let mut args = vec![target.remote.as_str()];
-        args.extend(&removed);
-        remote::run(REMOVE_SKIPPED, &args)?;
-    }
+    remove_remote(&target.remote, &removed)?;
     registry.set_skip(name, &folder.path, selection.skip)?;
     registry.save()?;
     Ok(true)
+}
+
+/// Deletes paths inside an uploaded folder on the VPS
+pub fn remove_remote<S: AsRef<str>>(root: &str, paths: &[S]) -> Result<()> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let mut args = vec![root];
+    for path in paths {
+        ensure!(is_safe(path.as_ref()), "cannot remove {:?}", path.as_ref());
+        args.push(path.as_ref());
+    }
+    remote::run(REMOVE_SKIPPED, &args)
 }
 
 fn is_safe(path: &str) -> bool {

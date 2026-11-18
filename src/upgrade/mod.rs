@@ -10,7 +10,10 @@ use anyhow::{Context, Result, bail, ensure};
 use etcetera::BaseStrategy;
 use sha2::{Digest, Sha256};
 
-use crate::output;
+use clap::ValueEnum;
+
+use crate::agent::Agent;
+use crate::{image, output};
 
 const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 const CHECK_FILE: &str = "latest-release";
@@ -45,13 +48,40 @@ pub fn run() -> Result<()> {
 
     let binary = work.join(archive_folder(&archive)).join(executable_name());
     ensure!(binary.is_file(), "the downloaded archive has no sai inside");
+    let rebuild = rebuild_notice(&binary);
     replace(&executable, &binary)?;
     fs::remove_dir_all(&work).ok();
     output::info(&format!(
         "Updated sai {current} to {}. Restart sai to use it",
         release.version
     ));
+    if let Some(rebuild) = rebuild {
+        output::warning(rebuild);
+    }
     Ok(())
+}
+
+/// Asks the new sai which images it runs: a changed image is rebuilt on the VPS by the
+/// next `sai chat`, and the user should know before that chat takes half an hour.
+/// Versions without this check answer nothing, and nothing is said
+fn rebuild_notice(binary: &Path) -> Option<&'static str> {
+    let output = Command::new(binary).arg("image-tags").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let tags = String::from_utf8_lossy(&output.stdout);
+    let mut tags = tags.lines().map(str::trim);
+    if tags.next()? != image::base() {
+        return Some(
+            "the new version changes the agent image: the next `sai chat` rebuilds it on the VPS once, this takes 15-30 minutes. Projects, files and chats stay as they are",
+        );
+    }
+    let agents: Vec<String> = Agent::value_variants()
+        .iter()
+        .map(|agent| image::agent(*agent))
+        .collect();
+    tags.any(|tag| !agents.iter().any(|agent| agent == tag))
+        .then_some("the new version changes the agent image: the next `sai chat` rebuilds it on the VPS once, this takes 2-5 minutes")
 }
 
 pub fn available() -> Option<String> {

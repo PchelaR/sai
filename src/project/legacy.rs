@@ -49,6 +49,7 @@ pub fn migrate(registry: &mut Registry) -> Result<()> {
                 path,
                 git: false,
                 skip: Vec::new(),
+                history: Vec::new(),
             }],
         });
         registry.save()?;

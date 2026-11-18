@@ -5,7 +5,8 @@ image=$4
 spec=$5
 agent=$6
 login_files=$7
-shift 7
+setting_files=$8
+shift 8
 
 state="$HOME/agents/$project/$agent"
 login="$HOME/agents/.login/$agent"
@@ -49,6 +50,19 @@ else
       ln -s "/login/$file" "$state/$file"
     fi
   done
+  # Settings used to be shared like the sign-in. Each project gets its own copy of what
+  # it used, and nothing reads the shared ones any more
+  for file in $setting_files; do
+    if [ -L "$state/$file" ]; then
+      rm -f "$state/$file"
+      if [ -f "$login/$file" ] && [ ! -L "$login/$file" ]; then
+        cp "$login/$file" "$state/$file"
+      fi
+    fi
+  done
+  if [ "$agent" = claude ] && [ ! -e "$state/.claude.json" ]; then
+    printf '{"hasCompletedOnboarding":true}\n' > "$state/.claude.json"
+  fi
   mem_kb=$(awk '/^MemTotal/ { print $2 }' /proc/meminfo)
   docker run -d --init \
     --name "$container" \

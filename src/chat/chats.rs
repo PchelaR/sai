@@ -5,7 +5,7 @@ use crate::logs::time;
 use crate::remote;
 
 const CHATS: &str = concat!(include_str!("agent_state.sh"), include_str!("chats.sh"));
-const BUSY: &[&str] = &["working", "asking"];
+pub const BUSY: &[&str] = &["working", "asking"];
 
 pub struct Chat {
     pub id: String,

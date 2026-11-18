@@ -108,11 +108,10 @@ fn wait_before_retry(attempt: u32) {
     thread::sleep(RETRY_DELAY);
 }
 
+/// Runs a script for a background poller. Pollers run every few seconds for a long time,
+/// so single calls are not logged: the poller logs when the VPS stops or starts answering
 pub fn probe(script: &str, args: &[&str]) -> Option<String> {
-    let output = spawn(first_line(script), script, args)
-        .ok()?
-        .wait_with_output()
-        .ok()?;
+    let output = start(script, args).ok()?.wait_with_output().ok()?;
     output
         .status
         .success()
@@ -190,6 +189,10 @@ fn spawn(name: &str, script: &str, args: &[&str]) -> Result<Child> {
         "ssh {HOST_ALIAS} script {name}, args: {}",
         logs::describe(args)
     ));
+    start(script, args)
+}
+
+fn start(script: &str, args: &[&str]) -> Result<Child> {
     let mut child = Command::new(ssh::program("ssh"))
         .arg("-T")
         .args(["-o", "ConnectTimeout=10"])

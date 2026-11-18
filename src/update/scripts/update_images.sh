@@ -20,4 +20,6 @@ docker images sai-base --format '{{.Repository}}:{{.Tag}}' \
   | grep -vxF "$base" \
   | xargs -r docker rmi >/dev/null 2>&1 || true
 docker image prune -f >/dev/null
-docker builder prune -af >/dev/null
+if [ ! -f "$HOME/.sai/keep-build-cache" ]; then
+  docker builder prune -af >/dev/null
+fi

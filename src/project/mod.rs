@@ -3,6 +3,7 @@ pub mod content;
 pub mod detach;
 pub mod files;
 pub mod folders;
+pub mod history;
 mod legacy;
 pub mod list;
 pub mod lock;
@@ -33,6 +34,39 @@ pub struct Folder {
     pub path: PathBuf,
     pub git: bool,
     pub skip: Vec<String>,
+    /// Repositories the user picked for git history when the folder has more than
+    /// repos::LIMIT of them, as repos::label. Empty: the first repos::LIMIT
+    pub history: Vec<String>,
+}
+
+impl Folder {
+    /// Git repositories of the folder, without those in folders the user does not upload:
+    /// their history must not reach the VPS either
+    pub fn repos(&self) -> Vec<PathBuf> {
+        repos::find(&self.path)
+            .into_iter()
+            .filter(|relative| {
+                let label = repos::label(relative);
+                !self
+                    .skip
+                    .iter()
+                    .any(|skipped| content::is_within(&label, skipped))
+            })
+            .collect()
+    }
+
+    /// Repositories whose history the agent gets
+    pub fn history_repos(&self) -> Vec<PathBuf> {
+        let found = self.repos();
+        if found.len() <= repos::LIMIT || self.history.is_empty() {
+            return found.into_iter().take(repos::LIMIT).collect();
+        }
+        found
+            .into_iter()
+            .filter(|relative| self.history.contains(&repos::label(relative)))
+            .take(repos::LIMIT)
+            .collect()
+    }
 }
 
 #[derive(Clone)]
@@ -81,9 +115,9 @@ impl Project {
             .iter()
             .filter(|folder| folder.git)
             .flat_map(|folder| {
-                repos::find(&folder.path)
+                folder
+                    .history_repos()
                     .into_iter()
-                    .take(repos::LIMIT)
                     .map(|relative| self.git_target(folder, &relative))
             })
             .collect()
@@ -255,6 +289,36 @@ fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn history_skips_folders_that_are_not_uploaded_and_follows_the_pick() {
+        let root = std::env::temp_dir().join(format!("sai-history-{}", std::process::id()));
+        let names: Vec<String> = (0..super::repos::LIMIT + 2)
+            .map(|index| format!("r{index:02}"))
+            .collect();
+        for name in &names {
+            std::fs::create_dir_all(root.join(name).join(".git")).unwrap();
+        }
+        std::fs::create_dir_all(root.join("private").join("secret").join(".git")).unwrap();
+        let mut folder = super::Folder {
+            name: "code".to_owned(),
+            path: root.clone(),
+            git: true,
+            skip: vec!["private".to_owned()],
+            history: Vec::new(),
+        };
+        let labels = |found: Vec<std::path::PathBuf>| -> Vec<String> {
+            found
+                .iter()
+                .map(|relative| super::repos::label(relative))
+                .collect()
+        };
+        assert_eq!(labels(folder.repos()), names);
+        assert_eq!(labels(folder.history_repos()), names[..super::repos::LIMIT]);
+        folder.history = vec!["r21".to_owned(), "r00".to_owned(), "gone".to_owned()];
+        assert_eq!(labels(folder.history_repos()), ["r00", "r21"]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     use std::path::PathBuf;
 
     use super::{id, remote_path, slug, sync_id, validate_name, without_verbatim_prefix};

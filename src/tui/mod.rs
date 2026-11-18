@@ -1,5 +1,6 @@
 mod actions;
 mod app;
+mod bell;
 mod complete;
 mod explorer;
 mod loader;
@@ -13,9 +14,10 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseEventKind,
+    self, DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture, Event,
+    KeyEventKind, MouseEventKind,
 };
-use ratatui::crossterm::execute;
+use ratatui::crossterm::{cursor, execute};
 
 use crate::project::Registry;
 use crate::{console, mutagen};
@@ -42,7 +44,16 @@ fn event_loop(terminal: &mut DefaultTerminal) -> Result<()> {
     let mut progress: Option<Receiver<Progress>> = None;
     let mut dirty = true;
     let mut retry_at: Option<Instant> = None;
+    let mut watcher = Some(bell::watch());
     loop {
+        if let Some(watching) = &watcher {
+            for states in watching.states.try_iter() {
+                if app.agent_states(states) && app.unfocused {
+                    bell::ring();
+                }
+                dirty = true;
+            }
+        }
         if let Ok(loaded) = loading.try_recv() {
             retry_at = loaded
                 .is_err()
@@ -81,8 +92,17 @@ fn event_loop(terminal: &mut DefaultTerminal) -> Result<()> {
                         }
                         continue;
                     }
-                    Event::Resize(..) | Event::FocusGained => {
+                    Event::Resize(..) => {
                         dirty = true;
+                        continue;
+                    }
+                    Event::FocusGained => {
+                        app.unfocused = false;
+                        dirty = true;
+                        continue;
+                    }
+                    Event::FocusLost => {
+                        app.unfocused = true;
                         continue;
                     }
                     _ => continue,
@@ -102,8 +122,11 @@ fn event_loop(terminal: &mut DefaultTerminal) -> Result<()> {
                 loading = reload(&mut app);
             }
             Some(Outcome::Run(Action::Open(session))) => {
+                drop(watcher.take());
                 actions::open(terminal, session)?;
                 terminal.clear()?;
+                app.forget_agent_states();
+                watcher = Some(bell::watch());
                 loading = reload(&mut app);
             }
             Some(Outcome::Run(Action::Run(task))) => {
@@ -117,13 +140,16 @@ fn event_loop(terminal: &mut DefaultTerminal) -> Result<()> {
 
 pub fn init() -> Result<DefaultTerminal> {
     let terminal = ratatui::init();
-    execute!(io::stdout(), EnableMouseCapture)?;
+    execute!(io::stdout(), EnableMouseCapture, EnableFocusChange)?;
     Ok(terminal)
 }
 
 pub fn restore() {
-    execute!(io::stdout(), DisableMouseCapture).ok();
+    execute!(io::stdout(), DisableMouseCapture, DisableFocusChange).ok();
     ratatui::restore();
+    // ratatui hides the cursor while drawing and does not show it back, so a plain shell
+    // opened from the menu (sai vps, sai shell) would have no cursor
+    execute!(io::stdout(), cursor::Show).ok();
 }
 
 fn reload(app: &mut App) -> Receiver<Result<Loaded, String>> {

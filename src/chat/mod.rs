@@ -9,7 +9,7 @@ use dialoguer::{Confirm, Select};
 use crate::agent::{Agent, Start};
 use crate::project::{self, Registry};
 use crate::snapshot::review;
-use crate::{attach, console, output, quote, remote};
+use crate::{attach, console, output, quote, remote, tools};
 
 pub fn run(name: Option<&str>, agent: Option<Agent>, start: Start) -> Result<()> {
     let mut registry = Registry::open()?;
@@ -25,6 +25,7 @@ pub fn run(name: Option<&str>, agent: Option<Agent>, start: Start) -> Result<()>
     let lock = project::lock::hold(&name)?;
     let attached = attach::ensure(&mut registry, &name, agent)?;
     let agent = attached.agent;
+    attach::old_chats(&name, agent)?;
     let start = match start {
         Start::Ask => ask(&name, agent)?,
         other => other,
@@ -56,9 +57,11 @@ pub fn run(name: Option<&str>, agent: Option<Agent>, start: Start) -> Result<()>
         agent.command(&start)
     );
     let watcher = login::watch(&attached.project.id(), agent);
+    let container = quote::shell(&attached.project.id());
+    // An agent started by an older sai keeps its tmux settings, reload them on every attach
     let result = remote::interactive(&format!(
-        "exec docker exec -it {} tmux new -A -s {} {}",
-        quote::shell(&attached.project.id()),
+        "docker exec {container} tmux source-file {} >/dev/null 2>&1; exec docker exec -it {container} tmux new -A -s {} {}",
+        tools::TMUX_TARGET,
         agent.name(),
         quote::shell(&command)
     ));

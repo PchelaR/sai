@@ -8,6 +8,7 @@ const PUSH: &str = "Pushes are made by the user";
 const HISTORY: &str =
     "The agent can read git history but not change branches, history or files through git";
 const USER_DENY: &str = "Forbidden in the sai config";
+const BELL: &str = include_str!("bell.sh");
 
 const BUILT_IN: &[(&str, &str)] = &[
     ("rm", DELETE),
@@ -101,8 +102,14 @@ impl Permissions {
             .iter()
             .map(|words| pattern(words))
             .collect();
+        let bell = json!([{ "hooks": [{ "type": "command", "command": BELL, "timeout": 5 }] }]);
+        let asking = json!([{
+            "matcher": "permission_prompt",
+            "hooks": [{ "type": "command", "command": BELL, "timeout": 5 }]
+        }]);
         Ok(serde_json::to_string_pretty(&json!({
-            "permissions": { "deny": deny, "allow": allow }
+            "permissions": { "deny": deny, "allow": allow },
+            "hooks": { "Stop": bell, "Notification": asking }
         }))? + "\n")
     }
 
@@ -196,6 +203,19 @@ mod tests {
         ));
         assert_eq!(codex.lines().count(), 19);
         assert!(permissions.lifted().is_empty());
+    }
+
+    #[test]
+    fn rings_the_bell_when_claude_finishes_or_asks() {
+        let claude: serde_json::Value =
+            serde_json::from_str(&Permissions::default().claude().unwrap()).unwrap();
+        let hooks = &claude["hooks"];
+        assert_eq!(hooks["Notification"][0]["matcher"], "permission_prompt");
+        for event in ["Stop", "Notification"] {
+            let command = hooks[event][0]["hooks"][0]["command"].as_str().unwrap();
+            assert!(command.contains("printf '\\a'"));
+            assert!(command.contains("focused"));
+        }
     }
 
     #[test]

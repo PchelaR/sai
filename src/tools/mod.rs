@@ -47,6 +47,33 @@ const WATCHED: &[&str] = &[
     ".devcontainer/",
     ".github/workflows/",
     ".cargo/",
+    "Cargo.toml",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    ".yarnrc",
+    ".yarnrc.yml",
+    ".pnpmfile.cjs",
+    "bunfig.toml",
+    "gradlew",
+    "gradlew.bat",
+    "*.gradle",
+    "*.gradle.kts",
+    "gradle/wrapper/",
+    "mvnw",
+    "mvnw.cmd",
+    "pom.xml",
+    ".mvn/",
+    ".gitlab-ci.yml",
+    ".circleci/",
+    "Jenkinsfile",
+    // Settings and instructions of coding agents run on this computer: hooks, MCP servers
+    ".claude/",
+    ".mcp.json",
+    ".codex/",
+    ".cursor/",
+    ".zed/",
+    "CLAUDE.md",
+    "AGENTS.md",
 ];
 const EXECUTABLE: &str = "755";
 const READABLE: &str = "644";
@@ -54,7 +81,7 @@ const READABLE: &str = "644";
 const CLAUDE_POLICY_FILE: &str = "claude-managed-settings.json";
 const CODEX_RULES_FILE: &str = "codex.rules";
 const TMUX_FILE: &str = "tmux.conf";
-const TMUX_TARGET: &str = "/home/agent/.tmux.conf";
+pub const TMUX_TARGET: &str = "/home/agent/.tmux.conf";
 const INSTRUCTIONS_FILE: &str = "instructions.md";
 
 pub fn snapshots_path() -> String {

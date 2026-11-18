@@ -88,6 +88,9 @@ enum Command {
         project: Option<String>,
         folder: Option<String>,
     },
+    History {
+        project: Option<String>,
+    },
     Snapshots {
         project: Option<String>,
     },
@@ -125,6 +128,8 @@ enum Command {
     Completions {
         shell: Shell,
     },
+    #[command(hide = true)]
+    ImageTags,
 }
 
 #[derive(Parser)]
@@ -137,6 +142,11 @@ struct Cli {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    // An older sai asks this during `sai upgrade`: answer without logs, sync or completions
+    if matches!(cli.command, Some(Command::ImageTags)) {
+        image::print_tags();
+        return Ok(());
+    }
     let arguments = env::args().skip(1).collect::<Vec<_>>().join(" ");
     logs::start(if arguments.is_empty() {
         "tui"
@@ -205,6 +215,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Files { project, folder } => {
             project::files::run(project.as_deref(), folder.as_deref())
         }
+        Command::History { project } => project::history::run(project.as_deref()),
         Command::Review { project } => snapshot::review::run(project.as_deref()),
         Command::Snapshots { project } => snapshot::list(project.as_deref()),
         Command::Restore {
@@ -225,6 +236,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Command::Rm { project, purge } => project::remove::run_with_confirmation(&project, purge),
         Command::Completions { shell } => completions::print(shell, Cli::command()),
+        Command::ImageTags => unreachable!("answered before anything starts"),
     };
     if remind {
         upgrade::notice();

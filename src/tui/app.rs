@@ -1,4 +1,5 @@
 use clap::ValueEnum;
+use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
@@ -12,7 +13,7 @@ use crate::agent::Agent;
 use crate::agent::Start;
 use crate::chat::chats::{self, Chats};
 use crate::project::folders::Plan;
-use crate::project::list::Row;
+use crate::project::list::{self, Row};
 use crate::snapshot::{Snapshot, review};
 use crate::{project, snapshot};
 
@@ -129,6 +130,11 @@ pub struct App {
     pub selected: usize,
     pub mode: Mode,
     pub pending: Option<Outcome>,
+    /// The user switched to another window, so the menu calls them when an agent stops.
+    /// Terminals that do not report focus keep this false: the menu stays quiet rather
+    /// than beeping at someone who watches it
+    pub unfocused: bool,
+    agent_states: HashMap<String, String>,
 }
 
 impl App {
@@ -142,6 +148,31 @@ impl App {
             }
             Err(error) => self.error = Some(error),
         }
+    }
+
+    /// Takes fresh agent states and tells whether an agent now waits for the user
+    pub fn agent_states(&mut self, states: HashMap<String, String>) -> bool {
+        let call = states.iter().any(|(name, now)| {
+            self.agent_states
+                .get(name)
+                .is_some_and(|before| list::needs_user(before, now))
+        });
+        if let Some(loaded) = &mut self.loaded {
+            for row in loaded.projects.iter_mut().filter(|row| row.live()) {
+                if let Some(state) = states.get(&row.name) {
+                    row.set_agent_state(state);
+                }
+            }
+        }
+        self.agent_states = states;
+        call
+    }
+
+    /// Inside a chat the agent rings the bell itself, so the menu starts over afterwards
+    /// instead of ringing again for what happened during the chat
+    pub fn forget_agent_states(&mut self) {
+        self.agent_states.clear();
+        self.unfocused = false;
     }
 
     pub fn start(&mut self, title: String) {
@@ -518,6 +549,7 @@ impl App {
                 self.load_chats(name, agent_of(project), ChatPurpose::Remove)
             }
             ProjectItem::Shell => open(Session::Shell(name)),
+            ProjectItem::History => open(Session::History(name)),
             ProjectItem::Stop => run(Task::Stop(name)),
             ProjectItem::Folders if project.only_on_vps => {
                 self.mode = Mode::ChooseAgent {

@@ -3,17 +3,21 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 use super::{Project, Registry};
+use crate::chat::chats::BUSY;
 use crate::{mutagen, remote};
 
 const LIST: &str = concat!(
     include_str!("../chat/agent_state.sh"),
     include_str!("scripts/list.sh")
 );
+const STATES: &str = concat!(
+    include_str!("../chat/agent_state.sh"),
+    include_str!("scripts/states.sh")
+);
 const NOT_SYNCING: &str = "not syncing";
 const NO_CONTAINER: &str = "-";
 const ONLY_ON_VPS: &str = "only on VPS";
 const OTHER_VPS: &str = "other VPS";
-const BUSY: &[&str] = &["working", "asking"];
 
 #[derive(Clone)]
 pub struct FolderRow {
@@ -22,6 +26,18 @@ pub struct FolderRow {
     pub sync: String,
     pub git: bool,
     pub skipped: usize,
+}
+
+impl Row {
+    /// The row shows a project of this VPS, so its agent state can be updated in place
+    pub fn live(&self) -> bool {
+        !self.only_on_vps && self.state != OTHER_VPS
+    }
+
+    pub fn set_agent_state(&mut self, state: &str) {
+        self.state = describe_state(state);
+        self.busy = BUSY.contains(&state);
+    }
 }
 
 impl FolderRow {
@@ -152,6 +168,23 @@ pub fn load() -> Result<Vec<Row>> {
     Ok(rows)
 }
 
+/// What the agents of the running projects are doing now, a quick check for the menu
+pub fn agent_states() -> Option<HashMap<String, String>> {
+    let output = remote::probe(STATES, &[])?;
+    Some(
+        parse(&output)
+            .states
+            .into_iter()
+            .map(|(name, state)| (name.to_owned(), state.to_owned()))
+            .collect(),
+    )
+}
+
+/// The agent stopped and waits for the user: it finished a task or asks for permission
+pub fn needs_user(before: &str, now: &str) -> bool {
+    (before == "working" && now == "waiting") || (before != "asking" && now == "asking")
+}
+
 fn parse(output: &str) -> Listing<'_> {
     let mut listing = Listing {
         vps: None,
@@ -259,7 +292,18 @@ fn summary(folders: &[FolderRow]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{FolderRow, parse, summary};
+    use super::{FolderRow, needs_user, parse, summary};
+
+    #[test]
+    fn calls_the_user_when_the_agent_stops() {
+        assert!(needs_user("working", "waiting"));
+        assert!(needs_user("working", "asking"));
+        assert!(needs_user("waiting", "asking"));
+        assert!(!needs_user("asking", "asking"));
+        assert!(!needs_user("asking", "working"));
+        assert!(!needs_user("waiting", "waiting"));
+        assert!(!needs_user("idle", "waiting"));
+    }
 
     #[test]
     fn reads_containers_and_project_files() {

@@ -6,7 +6,7 @@ use dialoguer::Confirm;
 
 use crate::config::Config;
 use crate::ssh::{self, Env, Session};
-use crate::vps::{HOST_ALIAS, MINIMAL, SETUP_MARKER, SSH_PORT, USER};
+use crate::vps::{self, HOST_ALIAS, MINIMAL, SETUP_MARKER, SSH_PORT, USER};
 use crate::{image, output};
 use steps::Step;
 
@@ -24,12 +24,22 @@ pub async fn run(minimal: bool) -> Result<()> {
         return Ok(());
     }
 
-    let env = script_env(&config)?;
+    let mut env = script_env(&config)?;
     let credentials = credentials::ask(&config.ip)?;
     if !confirmed(&config, minimal)? {
         output::info("Nothing was changed");
         return Ok(());
     }
+    let keep_cache = Confirm::new()
+        .with_prompt(
+            "Keep Docker's build cache on the VPS? Rebuilding the agent image after a sai update then takes minutes instead of 15-30, but the cache takes a few more GB of disk. Worth it with 50 GB of disk or more",
+        )
+        .default(false)
+        .interact()?;
+    env.push((
+        "SAI_KEEP_BUILD_CACHE",
+        if keep_cache { "yes" } else { "" }.to_owned(),
+    ));
     let login_port = if minimal {
         config.port()
     } else {
@@ -143,6 +153,7 @@ fn script_env(config: &Config) -> Result<Vec<(&'static str, String)>> {
         ("SAI_MINIMAL", MINIMAL.to_owned()),
         ("SAI_PUBKEY", config.public_key()?),
         ("SAI_SETUP_MARKER", SETUP_MARKER.to_owned()),
+        ("SAI_BUILD_CACHE_MARKER", vps::build_cache_marker()),
         ("SAI_IMAGE", image::base()),
         ("SAI_DOCKERFILE", image::encoded_base()),
     ])

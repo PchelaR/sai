@@ -35,6 +35,8 @@ struct StoredFolder {
     git: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     skip: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    history: Vec<String>,
 }
 
 pub struct Registry {
@@ -76,6 +78,7 @@ impl Registry {
                             path: PathBuf::from(folder.path),
                             git: folder.git,
                             skip: folder.skip,
+                            history: folder.history,
                         })
                         .collect(),
                     name: name.clone(),
@@ -106,6 +109,7 @@ impl Registry {
                                 path: folder.path.display().to_string(),
                                 git: folder.git,
                                 skip: folder.skip.clone(),
+                                history: folder.history.clone(),
                             })
                             .collect(),
                     };
@@ -259,6 +263,20 @@ impl Registry {
         Ok(())
     }
 
+    pub fn set_history(&mut self, project: &str, path: &Path, history: Vec<String>) -> Result<()> {
+        let target = self
+            .projects
+            .get_mut(project)
+            .with_context(|| format!("no project named {project}"))?;
+        let folder = target
+            .folders
+            .iter_mut()
+            .find(|folder| same_path(&folder.path, path))
+            .with_context(|| format!("{} is not attached to {project}", path.display()))?;
+        folder.history = history;
+        Ok(())
+    }
+
     pub fn set_vps(&mut self, project: &str, vps: &str) -> Result<()> {
         self.projects
             .get_mut(project)
@@ -344,6 +362,7 @@ mod tests {
             path: PathBuf::from(path),
             git: false,
             skip: Vec::new(),
+            history: Vec::new(),
         }
     }
 
