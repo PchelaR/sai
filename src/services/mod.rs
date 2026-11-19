@@ -376,19 +376,26 @@ pub fn purge(project: &str) -> Result<()> {
 
 /// The part of the agent's instructions that tells it how to reach the services
 pub fn instructions(services: &[Service]) -> String {
-    let running: Vec<&Service> = services.iter().filter(|service| !service.stopped).collect();
-    if running.is_empty() {
+    if services.is_empty() {
         return String::new();
     }
     let mut text = String::from(
         "\n\n## Services of this project\n\nThese run next to you and are reachable on localhost. Their data is not part of the project snapshots. You cannot start, stop or reconfigure them, the user does that in sai. To look into them, use the clients installed in your container rather than installing a driver just for that (the project's own dependencies install as usual):\n\n",
     );
-    for service in running {
-        text.push_str(&format!(
-            "- {}\n  `{}`\n",
-            service.connection(),
-            service.client()
-        ));
+    for service in services {
+        if service.stopped {
+            // Listed anyway: without it the agent sees a refused port and has to guess why
+            text.push_str(&format!(
+                "- {}: stopped by the user. If you need it, ask them to start it in sai (services of this project)\n",
+                service.label()
+            ));
+        } else {
+            text.push_str(&format!(
+                "- {}\n  `{}`\n",
+                service.connection(),
+                service.client()
+            ));
+        }
     }
     text
 }
@@ -457,7 +464,8 @@ mod tests {
         assert!(text.contains("redis-cli -p 6379 -a secret"));
         let mariadb = super::instructions(&[Service::new(Kind::Mariadb)]);
         assert!(mariadb.contains("--skip-ssl"));
-        assert!(!text.contains("MariaDB"));
+        assert!(text.contains("MariaDB 10.11: stopped by the user"));
+        assert!(!text.contains("mariadb -h"));
         assert!(super::instructions(&[]).is_empty());
     }
 
