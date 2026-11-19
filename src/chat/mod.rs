@@ -68,7 +68,7 @@ pub fn run(name: Option<&str>, agent: Option<Agent>, start: Start) -> Result<()>
     drop(watcher);
     review::after_chat(&name);
     // After the chat: before it, tmux would cover the tips at once
-    crate::windows_terminal::hint_once();
+    crate::windows_terminal::offer_once();
     result
 }
 

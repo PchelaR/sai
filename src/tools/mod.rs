@@ -12,6 +12,24 @@ const SNAPSHOTS: &str = include_str!("snapshots.sh");
 const SNAPSHOT_SERVICE: &str = include_str!("sai-snapshot.service");
 const SNAPSHOT_TIMER: &str = include_str!("sai-snapshot.timer");
 const TMUX: &str = include_str!("tmux.conf");
+const TURN_REPORT: &str = include_str!("turn_report.sh");
+const TURN_REPORT_FILE: &str = "turn-report";
+const EXCLUDES_FILE: &str = "snapshot-excludes";
+const EXCLUDES_TARGET: &str = "/opt/sai/excludes";
+const CODEX_REQUIREMENTS_FILE: &str = "codex-requirements.toml";
+// Codex runs hooks from requirements.toml as managed: trusted and not switchable by the agent
+const CODEX_REQUIREMENTS: &str = r#"[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "/opt/sai/turn-report start"
+timeout = 60
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "/opt/sai/turn-report report"
+timeout = 60
+"#;
 const WATCHED: &[&str] = &[
     ".saiignore",
     ".gitignore",
@@ -97,7 +115,13 @@ pub fn install_step(
     let units = format!("/home/{USER}/.config/systemd/user");
     let files = [
         (snapshots_path(), EXECUTABLE, SNAPSHOTS.to_owned()),
-        (file("snapshot-excludes"), READABLE, snapshot_excludes()),
+        (file(EXCLUDES_FILE), READABLE, snapshot_excludes()),
+        (file(TURN_REPORT_FILE), EXECUTABLE, TURN_REPORT.to_owned()),
+        (
+            file(CODEX_REQUIREMENTS_FILE),
+            READABLE,
+            CODEX_REQUIREMENTS.to_owned(),
+        ),
         (file("watched-files"), READABLE, watched_files()),
         (
             format!("{units}/sai-snapshot.service"),
@@ -134,11 +158,21 @@ pub fn read_only_mounts(agent: Agent, project: &str) -> Vec<String> {
             "/state/AGENTS.md",
         ),
     };
-    vec![
+    let mut mounts = vec![
         format!("{}:{policy_target}", file(policy)),
         format!("{}:{instructions_target}", instructions_path(project)),
         format!("{}:{TMUX_TARGET}", file(TMUX_FILE)),
-    ]
+        // What the agent changed in each answer, shown to the user
+        format!("{}:{}", file(TURN_REPORT_FILE), policy::TURN_REPORT_TARGET),
+        format!("{}:{EXCLUDES_TARGET}", file(EXCLUDES_FILE)),
+    ];
+    if agent == Agent::Codex {
+        mounts.push(format!(
+            "{}:/etc/codex/requirements.toml",
+            file(CODEX_REQUIREMENTS_FILE)
+        ));
+    }
+    mounts
 }
 
 /// The agent's instructions for one project: the shared ones from the sai config and how

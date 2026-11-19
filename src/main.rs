@@ -96,6 +96,7 @@ enum Command {
     Services {
         project: Option<String>,
     },
+    Terminal,
     Snapshots {
         project: Option<String>,
     },
@@ -224,6 +225,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Command::History { project } => project::history::run(project.as_deref()),
         Command::Services { project } => services::menu::run(project.as_deref()),
+        Command::Terminal => windows_terminal::run(),
         Command::Review { project } => snapshot::review::run(project.as_deref()),
         Command::Snapshots { project } => snapshot::list(project.as_deref()),
         Command::Restore {

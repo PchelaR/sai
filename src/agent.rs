@@ -7,7 +7,7 @@ const CODEX: &str = "codex --sandbox danger-full-access --ask-for-approval on-re
 const CODEX_RESUMED: &str = "-c sandbox_mode=danger-full-access -c approval_policy=on-request";
 // Codex rings the terminal bell when it finishes a turn or asks for approval, only when
 // the window is not focused: tmux passes the terminal's focus events to Codex
-const CODEX_NOTIFY: &str = r#"-c 'tui.notifications=["agent-turn-complete","approval-requested"]' -c 'tui.notification_method="bel"' -c 'tui.notification_condition="unfocused"'"#;
+const CODEX_NOTIFY: &str = r#"-c 'tui.notifications=["agent-turn-complete","approval-requested"]' -c 'tui.notification_method="bel"' -c 'tui.notification_condition="unfocused"' -c 'features.hooks=true'"#;
 
 pub enum Start {
     Ask,

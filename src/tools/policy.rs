@@ -9,6 +9,7 @@ const HISTORY: &str =
     "The agent can read git history but not change branches, history or files through git";
 const USER_DENY: &str = "Forbidden in the sai config";
 const BELL: &str = include_str!("bell.sh");
+pub const TURN_REPORT_TARGET: &str = "/opt/sai/turn-report";
 
 const BUILT_IN: &[(&str, &str)] = &[
     ("rm", DELETE),
@@ -102,14 +103,19 @@ impl Permissions {
             .iter()
             .map(|words| pattern(words))
             .collect();
-        let bell = json!([{ "hooks": [{ "type": "command", "command": BELL, "timeout": 5 }] }]);
+        let report = |mode: &str| json!({ "type": "command", "command": format!("{TURN_REPORT_TARGET} {mode}"), "timeout": 60 });
+        let bell = json!([{ "hooks": [
+            { "type": "command", "command": BELL, "timeout": 5 },
+            report("report")
+        ] }]);
+        let prompt = json!([{ "hooks": [report("start")] }]);
         let asking = json!([{
             "matcher": "permission_prompt",
             "hooks": [{ "type": "command", "command": BELL, "timeout": 5 }]
         }]);
         Ok(serde_json::to_string_pretty(&json!({
             "permissions": { "deny": deny, "allow": allow },
-            "hooks": { "Stop": bell, "Notification": asking }
+            "hooks": { "Stop": bell, "Notification": asking, "UserPromptSubmit": prompt }
         }))? + "\n")
     }
 
@@ -211,6 +217,14 @@ mod tests {
             serde_json::from_str(&Permissions::default().claude().unwrap()).unwrap();
         let hooks = &claude["hooks"];
         assert_eq!(hooks["Notification"][0]["matcher"], "permission_prompt");
+        assert_eq!(
+            hooks["UserPromptSubmit"][0]["hooks"][0]["command"],
+            "/opt/sai/turn-report start"
+        );
+        assert_eq!(
+            hooks["Stop"][0]["hooks"][1]["command"],
+            "/opt/sai/turn-report report"
+        );
         for event in ["Stop", "Notification"] {
             let command = hooks[event][0]["hooks"][0]["command"].as_str().unwrap();
             assert!(command.contains("printf '\\a'"));

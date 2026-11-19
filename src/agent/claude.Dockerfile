@@ -2,10 +2,11 @@ ARG BASE
 FROM ${BASE}
 
 # Clients for the project's services (sai services): the agent inspects them without
-# installing drivers. In the agent image, so adding them did not rebuild the base image
+# installing drivers. rsync for the report of what each answer changed. In the agent
+# image, so adding them does not rebuild the base image
 USER root
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends mariadb-client redis-tools \
+    && apt-get install -y --no-install-recommends mariadb-client redis-tools rsync \
     && rm -rf /var/lib/apt/lists/*
 USER agent
 

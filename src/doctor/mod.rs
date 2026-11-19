@@ -35,7 +35,10 @@ pub fn run() -> Result<()> {
             report.ok("windows terminal");
         }
         for tip in tips {
-            report.warn("windows terminal", tip);
+            report.warn(
+                "windows terminal",
+                format!("{tip}. Or let sai do it: sai terminal"),
+            );
         }
     }
     report.check("mutagen", mutagen::ensure_installed());
