@@ -14,6 +14,7 @@ case "$mode" in
     fi
     ;;
   move)
+    docker ps -aq --filter "label=sai.service-of=$old" | xargs -r docker rm -f >/dev/null
     docker rm -f "sai-$old" >/dev/null 2>&1 || true
     for root in "$HOME/projects" "$HOME/snapshots" "$HOME/agents"; do
       if [ -d "$root/$old" ]; then

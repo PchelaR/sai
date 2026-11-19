@@ -121,22 +121,30 @@ pub fn install_step(
     Ok((INSTALL, args))
 }
 
-pub fn read_only_mounts(agent: Agent) -> Vec<String> {
-    let mounts: &[(&str, &str)] = match agent {
-        Agent::Claude => &[
-            (CLAUDE_POLICY_FILE, "/etc/claude-code/managed-settings.json"),
-            (INSTRUCTIONS_FILE, "/state/CLAUDE.md"),
-        ],
-        Agent::Codex => &[
-            (CODEX_RULES_FILE, "/state/rules/sai.rules"),
-            (INSTRUCTIONS_FILE, "/state/AGENTS.md"),
-        ],
+pub fn read_only_mounts(agent: Agent, project: &str) -> Vec<String> {
+    let (policy, policy_target, instructions_target) = match agent {
+        Agent::Claude => (
+            CLAUDE_POLICY_FILE,
+            "/etc/claude-code/managed-settings.json",
+            "/state/CLAUDE.md",
+        ),
+        Agent::Codex => (
+            CODEX_RULES_FILE,
+            "/state/rules/sai.rules",
+            "/state/AGENTS.md",
+        ),
     };
-    mounts
-        .iter()
-        .chain([&(TMUX_FILE, TMUX_TARGET)])
-        .map(|(name, target)| format!("{}:{target}", file(name)))
-        .collect()
+    vec![
+        format!("{}:{policy_target}", file(policy)),
+        format!("{}:{instructions_target}", instructions_path(project)),
+        format!("{}:{TMUX_TARGET}", file(TMUX_FILE)),
+    ]
+}
+
+/// The agent's instructions for one project: the shared ones from the sai config and how
+/// to reach the project's services. Next to the agent's state, outside of what it can write
+pub fn instructions_path(project: &str) -> String {
+    format!("/home/{USER}/agents/{project}/instructions.md")
 }
 
 fn file(name: &str) -> String {
@@ -166,8 +174,8 @@ mod tests {
 
     #[test]
     fn mounts_only_the_agents_own_files() {
-        let claude = read_only_mounts(Agent::Claude).join(" ");
-        let codex = read_only_mounts(Agent::Codex).join(" ");
+        let claude = read_only_mounts(Agent::Claude, "shop").join(" ");
+        let codex = read_only_mounts(Agent::Codex, "shop").join(" ");
         assert!(claude.contains("/etc/claude-code/managed-settings.json"));
         assert!(claude.contains("/state/CLAUDE.md"));
         assert!(!claude.contains("codex"));
@@ -176,6 +184,7 @@ mod tests {
         assert!(!codex.contains("claude"));
         for mounts in [&claude, &codex] {
             assert!(mounts.contains("/home/agent/.tmux.conf"));
+            assert!(mounts.contains("/home/sai/agents/shop/instructions.md:"));
         }
     }
 }

@@ -2,7 +2,7 @@ use anyhow::{Result, ensure};
 use dialoguer::{Confirm, Input};
 
 use super::{Registry, id, remote_path, validate_name};
-use crate::{mutagen, output, remote, snapshot};
+use crate::{mutagen, output, remote, services, snapshot};
 
 const REMOVE: &str = concat!(
     include_str!("scripts/remove.sh"),
@@ -45,6 +45,10 @@ pub fn run(name: &str, purge: bool) -> Result<()> {
         for id in project.session_ids()? {
             mutagen::drop_if_present(&id)?;
         }
+    }
+    if purge {
+        // Before remove.sh deletes the agent folder, where the list of their volumes is
+        services::purge(name)?;
     }
     let mode = if purge { "purge" } else { "keep" };
     let found = remote::output(REMOVE, &[&id(name), &remote_path(name), mode])?;

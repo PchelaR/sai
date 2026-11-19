@@ -3,6 +3,7 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
+use base64::{Engine, prelude::BASE64_STANDARD};
 use dialoguer::{Confirm, Select};
 
 use crate::agent::Agent;
@@ -10,7 +11,7 @@ use crate::config::{self, Config};
 use crate::project::content::{self, Selection};
 use crate::project::{self, Folder, Project, Registry, SyncTarget, repos};
 use crate::vps::SETUP_MARKER;
-use crate::{fingerprint, image, mutagen, output, remote, secrets, snapshot, ssh, tools};
+use crate::{fingerprint, image, mutagen, output, remote, secrets, services, snapshot, ssh, tools};
 
 const PREPARE_PROJECT: &str = include_str!("scripts/prepare_project.sh");
 const REMOVE_SECRETS: &str = include_str!("scripts/remove_secrets.sh");
@@ -22,6 +23,7 @@ const ENSURE_CONTAINER: &str = include_str!("scripts/ensure_container.sh");
 const FREE_SPACE: &str = include_str!("scripts/free_space.sh");
 const GIT_CONFIG: &str = include_str!("scripts/git_config.sh");
 const OLD_CHATS: &str = include_str!("scripts/old_chats.sh");
+const WRITE_INSTRUCTIONS: &str = include_str!("scripts/write_instructions.sh");
 const SHOWN_REPOS: usize = 8;
 const GIT_WARNING: &str = "If secrets were ever committed, the agent can read them in the history";
 const RESERVE: u64 = 2 * 1024 * 1024 * 1024;
@@ -174,6 +176,7 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
     let id = project::id(name);
     let remote_path = project::remote_path(name);
 
+    let instructions = config::instructions()?;
     output::step("Preparing the VPS");
     let prepared = remote::output_all(
         "prepare the project",
@@ -182,7 +185,7 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
                 PREPARE_PROJECT,
                 vec![SETUP_MARKER.to_owned(), id.clone(), remote_path.clone()],
             ),
-            tools::install_step(&config::instructions()?, &config.agents)?,
+            tools::install_step(&instructions, &config.agents)?,
         ],
     )?;
     let prepared = Prepared::parse(&prepared);
@@ -247,7 +250,11 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
             &image::encoded_base(),
         ]),
     ));
-    let mounts = tools::read_only_mounts(agent);
+    for service in &project.services {
+        service.validate()?;
+    }
+    steps.push(instructions_step(name, &instructions, &project.services));
+    let mounts = tools::read_only_mounts(agent, name);
     let spec = fingerprint::of(&format!("{ENSURE_CONTAINER}{}", mounts.join("\n")));
     let mut container_args = owned(&[
         id.as_str(),
@@ -261,6 +268,7 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
     ]);
     container_args.extend(mounts);
     steps.push((ENSURE_CONTAINER, container_args));
+    steps.push(services::ensure_step(name, &project.services));
     output::step("Saving a snapshot and starting the agent container");
     remote::run_all("prepare the agent container", &steps)?;
 
@@ -269,6 +277,24 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
     }
     let project = registry.get(name)?.clone();
     Ok(Attached { project, agent })
+}
+
+/// Writes the agent's instructions of one project: the shared ones and its services
+pub fn instructions_step(
+    name: &str,
+    instructions: &str,
+    services: &[services::Service],
+) -> (&'static str, Vec<String>) {
+    (
+        WRITE_INSTRUCTIONS,
+        vec![
+            tools::instructions_path(name),
+            BASE64_STANDARD.encode(format!(
+                "{instructions}{}",
+                services::instructions(services)
+            )),
+        ],
+    )
 }
 
 /// sai before 0.1.9 kept the chats of all projects in one Docker volume per agent, and

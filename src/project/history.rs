@@ -50,15 +50,19 @@ pub fn run(name: Option<&str>) -> Result<()> {
             .collect();
         let mut defaults: Vec<bool> = labels.iter().map(|label| chosen.contains(label)).collect();
         let picked = loop {
-            let picked = MultiSelect::new()
+            let Some(picked) = MultiSelect::new()
                 .with_prompt(format!(
-                    "{}: pick up to {} repositories whose history the agent gets (Space toggles, Enter saves)",
+                    "{}: pick up to {} repositories whose history the agent gets (Space toggles, Enter saves, Esc cancels)",
                     folder.path.display(),
                     repos::LIMIT
                 ))
                 .items(&labels)
                 .defaults(&defaults)
-                .interact()?;
+                .interact_opt()?
+            else {
+                output::info("Nothing was changed");
+                return Ok(());
+            };
             if (1..=repos::LIMIT).contains(&picked.len()) {
                 break picked;
             }

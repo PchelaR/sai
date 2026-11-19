@@ -30,6 +30,8 @@ if [ -n "$current" ] && [ "$current" != "$image_id $spec" ]; then
     echo "Agent container was updated, it will be applied after all agent sessions end"
   else
     echo "==> Updating agent container"
+    # Services live in the network of the agent container, they are started again after it
+    docker ps -aq --filter "label=sai.service-of=$project" | xargs -r docker rm -f >/dev/null
     docker rm -f "$container" >/dev/null
     current=
   fi

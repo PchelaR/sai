@@ -74,6 +74,7 @@ pub enum ProjectItem {
     RemoveChat,
     Shell,
     Folders,
+    Services,
     History,
     Change,
     Snapshots,
@@ -84,12 +85,13 @@ pub enum ProjectItem {
 }
 
 impl ProjectItem {
-    pub const ALL: [ProjectItem; 12] = [
+    pub const ALL: [ProjectItem; 13] = [
         ProjectItem::Chat,
         ProjectItem::NewChat,
         ProjectItem::RemoveChat,
         ProjectItem::Shell,
         ProjectItem::Folders,
+        ProjectItem::Services,
         ProjectItem::History,
         ProjectItem::Change,
         ProjectItem::Snapshots,
@@ -106,6 +108,7 @@ impl ProjectItem {
             ProjectItem::RemoveChat => "rm chat",
             ProjectItem::Shell => "shell",
             ProjectItem::Folders => "folders",
+            ProjectItem::Services => "services",
             ProjectItem::History => "history",
             ProjectItem::Change => "change",
             ProjectItem::Snapshots => "snapshots",
@@ -123,6 +126,7 @@ impl ProjectItem {
             ProjectItem::RemoveChat => "Delete a chat",
             ProjectItem::Shell => "Bash in the container",
             ProjectItem::Folders => "Choose folders and what to upload",
+            ProjectItem::Services => "Databases and queues next to the agent",
             ProjectItem::History => "Choose repositories with git history",
             ProjectItem::Change => "Switch to another agent",
             ProjectItem::Snapshots => "List and restore",
@@ -140,6 +144,7 @@ impl ProjectItem {
             ProjectItem::RemoveChat => 'K',
             ProjectItem::Shell => 's',
             ProjectItem::Folders => 'f',
+            ProjectItem::Services => 'e',
             ProjectItem::History => 'h',
             ProjectItem::Change => 'c',
             ProjectItem::Snapshots => 'p',

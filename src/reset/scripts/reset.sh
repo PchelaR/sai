@@ -1,11 +1,11 @@
 mode=$1
 
-containers=$( (docker ps -aq --filter label=sai.project; docker ps -aq --filter label=sai.path) | sort -u)
+containers=$( (docker ps -aq --filter label=sai.project; docker ps -aq --filter label=sai.path; docker ps -aq --filter label=sai.service-of) | sort -u)
 if [ -n "$containers" ]; then
   docker rm -f $containers >/dev/null
 fi
 
-volumes=$(docker volume ls -q --filter name=^sai-state-)
+volumes=$( (docker volume ls -q --filter name=^sai-state-; docker volume ls -q --filter name=^sai-svc-) | sort -u)
 if [ -n "$volumes" ]; then
   docker volume rm $volumes >/dev/null
 fi

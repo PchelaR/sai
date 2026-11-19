@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Folder, Project, legacy, validate_name};
 use crate::agent::Agent;
+use crate::services::Service;
 use crate::{config, files};
 
 const FILE: &str = "projects.toml";
@@ -25,6 +26,8 @@ struct StoredProject {
     vps: Option<String>,
     #[serde(default)]
     folders: Vec<StoredFolder>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    services: Vec<Service>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -81,6 +84,7 @@ impl Registry {
                             history: folder.history,
                         })
                         .collect(),
+                    services: project.services,
                     name: name.clone(),
                 };
                 (name, project)
@@ -112,6 +116,7 @@ impl Registry {
                                 history: folder.history.clone(),
                             })
                             .collect(),
+                        services: project.services.clone(),
                     };
                     (project.name.clone(), stored)
                 })
@@ -177,6 +182,7 @@ impl Registry {
                 retired_agent: None,
                 vps: None,
                 folders: Vec::new(),
+                services: Vec::new(),
             },
         );
         Ok(())
@@ -274,6 +280,14 @@ impl Registry {
             .find(|folder| same_path(&folder.path, path))
             .with_context(|| format!("{} is not attached to {project}", path.display()))?;
         folder.history = history;
+        Ok(())
+    }
+
+    pub fn set_services(&mut self, project: &str, services: Vec<Service>) -> Result<()> {
+        self.projects
+            .get_mut(project)
+            .with_context(|| format!("no project named {project}"))?
+            .services = services;
         Ok(())
     }
 

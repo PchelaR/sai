@@ -19,6 +19,7 @@ mod remote;
 mod reset;
 mod resolve;
 mod secrets;
+mod services;
 mod setup;
 mod shell;
 mod snapshot;
@@ -91,6 +92,9 @@ enum Command {
     History {
         project: Option<String>,
     },
+    Services {
+        project: Option<String>,
+    },
     Snapshots {
         project: Option<String>,
     },
@@ -159,6 +163,7 @@ async fn main() -> anyhow::Result<()> {
     );
     let presence = presence::enter(interactive);
     let result = run(cli).await;
+    console::show_cursor();
     if let Err(error) = &result {
         logs::error(error);
     }
@@ -216,6 +221,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             project::files::run(project.as_deref(), folder.as_deref())
         }
         Command::History { project } => project::history::run(project.as_deref()),
+        Command::Services { project } => services::menu::run(project.as_deref()),
         Command::Review { project } => snapshot::review::run(project.as_deref()),
         Command::Snapshots { project } => snapshot::list(project.as_deref()),
         Command::Restore {

@@ -8,4 +8,5 @@ if docker exec "$container" tmux ls >/dev/null 2>&1; then
   echo "$current is still running in ${container#sai-}, exit it with /exit first" >&2
   exit 1
 fi
+docker ps -aq --filter "label=sai.service-of=${container#sai-}" | xargs -r docker rm -f >/dev/null
 docker rm -f "$container" >/dev/null

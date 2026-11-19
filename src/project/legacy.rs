@@ -51,6 +51,7 @@ pub fn migrate(registry: &mut Registry) -> Result<()> {
                 skip: Vec::new(),
                 history: Vec::new(),
             }],
+            services: Vec::new(),
         });
         registry.save()?;
         remote::run(MIGRATE, &as_strs(&args("move")))?;

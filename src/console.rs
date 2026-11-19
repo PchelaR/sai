@@ -41,6 +41,17 @@ pub struct Session {
     saved: platform::Saved,
 }
 
+/// Prompts hide the cursor while they wait for a choice and leave it hidden when they end
+/// with an error, for example on Ctrl+C. sai shows it again on the way out
+pub fn show_cursor() {
+    let mut stdout = io::stdout();
+    if stdout.is_terminal() {
+        platform::allow_escape_sequences();
+        stdout.write_all(b"\x1b[?25h").ok();
+        stdout.flush().ok();
+    }
+}
+
 pub fn begin_session() -> Session {
     Session {
         saved: platform::begin(),

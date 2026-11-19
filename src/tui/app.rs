@@ -550,6 +550,7 @@ impl App {
             }
             ProjectItem::Shell => open(Session::Shell(name)),
             ProjectItem::History => open(Session::History(name)),
+            ProjectItem::Services => open(Session::Services(name)),
             ProjectItem::Stop => run(Task::Stop(name)),
             ProjectItem::Folders if project.only_on_vps => {
                 self.mode = Mode::ChooseAgent {

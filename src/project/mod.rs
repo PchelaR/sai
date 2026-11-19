@@ -21,6 +21,7 @@ use std::{env, fs};
 use anyhow::{Context, Result, bail, ensure};
 
 use crate::agent::Agent;
+use crate::services::Service;
 use crate::vps::USER;
 
 pub use registry::{Registry, is_inside, same_path};
@@ -76,6 +77,7 @@ pub struct Project {
     pub retired_agent: Option<String>,
     pub vps: Option<String>,
     pub folders: Vec<Folder>,
+    pub services: Vec<Service>,
 }
 
 pub struct SyncTarget {

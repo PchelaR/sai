@@ -8,7 +8,7 @@ use ratatui::DefaultTerminal;
 use crate::agent::{Agent, Start};
 use crate::project::folders::{self, Plan};
 use crate::project::{Registry, change, history, remove, rename, stop};
-use crate::{chat, doctor, logs, output, reset, shell, snapshot, update, upgrade};
+use crate::{chat, doctor, logs, output, reset, services, shell, snapshot, update, upgrade};
 
 pub enum Action {
     Open(Session),
@@ -19,6 +19,7 @@ pub enum Session {
     Chat(String, Start),
     Shell(String),
     History(String),
+    Services(String),
     Vps,
 }
 
@@ -87,6 +88,7 @@ pub fn open(terminal: &mut DefaultTerminal, session: Session) -> Result<()> {
         Session::Chat(project, start) => chat::run(Some(&project), None, start),
         Session::Shell(project) => shell::run(Some(&project)),
         Session::History(project) => history::run(Some(&project)).and_then(|()| wait_for_enter()),
+        Session::Services(project) => services::menu::run(Some(&project)),
         Session::Vps => shell::vps(),
     };
     if let Err(error) = &result {
