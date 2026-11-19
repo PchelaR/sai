@@ -8,7 +8,7 @@ use anyhow::{Context, Result, ensure};
 use crate::config::Config;
 use crate::project::Registry;
 use crate::vps::SETUP_MARKER;
-use crate::{console, image, mutagen, remote, ssh};
+use crate::{console, image, mutagen, remote, ssh, windows_terminal};
 use report::Report;
 
 const MIN_WINDOWS_SSH: (u32, u32) = (9, 0);
@@ -28,6 +28,15 @@ pub fn run() -> Result<()> {
     report.check("terminal", console::ensure_supported());
     if console::is_msys() {
         report.warn("terminal", console::MSYS_ADVICE);
+    }
+    if let Some(settings) = windows_terminal::settings() {
+        let tips = windows_terminal::tips(&settings);
+        if tips.is_empty() {
+            report.ok("windows terminal");
+        }
+        for tip in tips {
+            report.warn("windows terminal", tip);
+        }
     }
     report.check("mutagen", mutagen::ensure_installed());
 

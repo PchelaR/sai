@@ -9,7 +9,8 @@ use std::time::Duration;
 use crate::logs;
 use crate::project::list;
 
-const POLL: Duration = Duration::from_secs(5);
+// Windows OpenSSH cannot share one connection, so each check there opens a new one
+const POLL: Duration = Duration::from_secs(if cfg!(windows) { 10 } else { 5 });
 const BELL: &[u8] = b"\x07";
 
 /// Checks in the background what the agents are doing, so the menu can call the user

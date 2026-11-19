@@ -30,6 +30,7 @@ mod tui;
 mod update;
 mod upgrade;
 mod vps;
+mod windows_terminal;
 
 use std::env;
 
@@ -151,6 +152,7 @@ async fn main() -> anyhow::Result<()> {
         image::print_tags();
         return Ok(());
     }
+    console::restore_cursor_on_exit();
     let arguments = env::args().skip(1).collect::<Vec<_>>().join(" ");
     logs::start(if arguments.is_empty() {
         "tui"

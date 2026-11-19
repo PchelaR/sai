@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::logs;
 
@@ -7,6 +8,14 @@ type Sink = Box<dyn Fn(String)>;
 
 thread_local! {
     static SINK: RefCell<Option<Sink>> = const { RefCell::new(None) };
+}
+
+/// The menu owns the screen: a line printed by a background thread (loading the list,
+/// retrying the VPS) would land in the middle of it. Such lines go only to the log
+static SCREEN_TAKEN: AtomicBool = AtomicBool::new(false);
+
+pub fn take_screen(taken: bool) {
+    SCREEN_TAKEN.store(taken, Ordering::Relaxed);
 }
 
 pub fn capture(sink: impl Fn(String) + 'static) {
@@ -63,6 +72,7 @@ fn emit(line: String, is_error: bool) {
     logs::line(&line);
     SINK.with(|sink| match &*sink.borrow() {
         Some(sink) => sink(line),
+        None if SCREEN_TAKEN.load(Ordering::Relaxed) => {}
         None if is_error => eprintln!("{line}"),
         None => println!("{line}"),
     });

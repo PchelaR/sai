@@ -41,6 +41,11 @@ pub struct Session {
     saved: platform::Saved,
 }
 
+/// Windows only: Ctrl+C there ends sai before it can show the cursor on the way out
+pub fn restore_cursor_on_exit() {
+    platform::restore_cursor_on_exit();
+}
+
 /// Prompts hide the cursor while they wait for a choice and leave it hidden when they end
 /// with an error, for example on Ctrl+C. sai shows it again on the way out
 pub fn show_cursor() {
@@ -74,9 +79,10 @@ impl Drop for Session {
 mod platform {
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::System::Console::{
-        CONSOLE_MODE, CTRL_BREAK_EVENT, CTRL_C_EVENT, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
-        GetConsoleCP, GetConsoleMode, GetConsoleOutputCP, GetStdHandle, STD_HANDLE,
-        STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, SetConsoleCP, SetConsoleCtrlHandler, SetConsoleMode,
+        CONSOLE_CURSOR_INFO, CONSOLE_MODE, CTRL_BREAK_EVENT, CTRL_C_EVENT,
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING, GetConsoleCP, GetConsoleCursorInfo, GetConsoleMode,
+        GetConsoleOutputCP, GetStdHandle, STD_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+        SetConsoleCP, SetConsoleCtrlHandler, SetConsoleCursorInfo, SetConsoleMode,
         SetConsoleOutputCP,
     };
 
@@ -94,6 +100,29 @@ mod platform {
 
     unsafe extern "system" fn swallow(event: u32) -> BOOL {
         BOOL::from(event == CTRL_C_EVENT || event == CTRL_BREAK_EVENT)
+    }
+
+    // On Windows, Ctrl+C at a prompt ends the process right away, while the prompt hides
+    // the cursor. This shows it and lets Windows go on ending the process
+    unsafe extern "system" fn show_cursor_and_exit(_: u32) -> BOOL {
+        let output = handle(STD_OUTPUT_HANDLE);
+        let mut info = CONSOLE_CURSOR_INFO {
+            dwSize: 0,
+            bVisible: 0,
+        };
+        unsafe {
+            if GetConsoleCursorInfo(output, &mut info) != 0 {
+                info.bVisible = 1;
+                SetConsoleCursorInfo(output, &info);
+            }
+        }
+        0
+    }
+
+    pub fn restore_cursor_on_exit() {
+        unsafe {
+            SetConsoleCtrlHandler(Some(show_cursor_and_exit), 1);
+        }
     }
 
     fn handle(kind: STD_HANDLE) -> HANDLE {
@@ -169,4 +198,6 @@ mod platform {
     pub fn allow_escape_sequences() {}
 
     pub fn end(_: &Saved) {}
+
+    pub fn restore_cursor_on_exit() {}
 }

@@ -20,7 +20,7 @@ use ratatui::crossterm::event::{
 use ratatui::crossterm::{cursor, execute};
 
 use crate::project::Registry;
-use crate::{console, mutagen};
+use crate::{console, mutagen, output};
 use actions::{Action, Progress};
 use app::{App, Mode, Outcome};
 use loader::Loaded;
@@ -140,11 +140,13 @@ fn event_loop(terminal: &mut DefaultTerminal) -> Result<()> {
 
 pub fn init() -> Result<DefaultTerminal> {
     let terminal = ratatui::init();
+    output::take_screen(true);
     execute!(io::stdout(), EnableMouseCapture, EnableFocusChange)?;
     Ok(terminal)
 }
 
 pub fn restore() {
+    output::take_screen(false);
     execute!(io::stdout(), DisableMouseCapture, DisableFocusChange).ok();
     ratatui::restore();
     // ratatui hides the cursor while drawing and does not show it back, so a plain shell
