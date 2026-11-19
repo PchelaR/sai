@@ -65,7 +65,8 @@ else
   if [ "$agent" = claude ] && [ ! -e "$state/.claude.json" ]; then
     printf '{"hasCompletedOnboarding":true}\n' > "$state/.claude.json"
   fi
-  mem_kb=$(awk '/^MemTotal/ { print $2 }' /proc/meminfo)
+  # The services step lowers this when the project has services
+  agent_kb=$(memory_agent)
   docker run -d --init \
     --name "$container" \
     --hostname "${container#sai-}" \
@@ -75,7 +76,8 @@ else
     --network sai-net \
     --cap-drop ALL \
     --security-opt no-new-privileges \
-    --memory "$(( mem_kb * 3 / 4 ))k" \
+    --memory "${agent_kb}k" \
+    --memory-swap "$(memory_swap "$agent_kb")k" \
     --cpus "$(nproc)" \
     --pids-limit 512 \
     --restart unless-stopped \

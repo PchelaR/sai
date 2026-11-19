@@ -31,8 +31,8 @@ wait_for() {
   until docker exec "$name" "$@" >/dev/null 2>&1; do
     tries=$((tries - 1))
     if [ "$tries" -le 0 ] || ! running "$name"; then
-      echo "$name did not start, its log:" >&2
-      docker logs --tail 30 "$name" >&2 || true
+      echo "warning: $name did not start, its log:"
+      docker logs --tail 30 "$name" 2>&1 || true
       return 1
     fi
     sleep 2
@@ -41,12 +41,12 @@ wait_for() {
 
 create() {
   local name=$1 kind=$2 image=$3 volume=$4 user=$5 password=$6 root=$7 first=$8 spec=$9
-  local mem_kb agent_id common
+  local memory agent_id common
   if ! docker image inspect "$image" >/dev/null 2>&1; then
     echo "==> Downloading $image"
     docker pull -q "$image" >/dev/null
   fi
-  mem_kb=$(awk '/^MemTotal/ { print $2 }' /proc/meminfo)
+  memory=$(memory_service "$kind")
   agent_id=$(docker container inspect -f '{{ .Id }}' "$agent")
   common=(
     -d --name "$name"
@@ -55,7 +55,8 @@ create() {
     --security-opt no-new-privileges
     --cap-drop NET_RAW
     --pids-limit 512
-    --memory "$((mem_kb / 4))k"
+    --memory "${memory}k"
+    --memory-swap "$(memory_swap "$memory")k"
     --label "sai.service-of=$project"
     --label "sai.spec=$spec"
     --label "sai.agent-id=$agent_id"
@@ -129,6 +130,25 @@ configure() {
   esac
 }
 
+# The agent gets what the running services leave. Applied live, so the limit of an agent
+# started by an older sai, or before a service was added, follows too
+limit_agent() {
+  local args=("$@") kinds=() i memory left
+  for ((i = 0; i < ${#args[@]} / fields; i++)); do
+    if [ "${args[i * fields + 9]}" = yes ]; then
+      kinds+=("${args[i * fields + 1]}")
+    fi
+  done
+  memory=$(memory_agent "${kinds[@]}")
+  left=$(memory_left "${kinds[@]}")
+  if [ "$left" -lt "$memory_agent_minimum" ]; then
+    echo "warning: the VPS has $(( $(memory_total) / 1024 )) MB of memory, next to the services of $project the agent gets $(( memory / 1024 )) MB and the VPS may run short. Stop a service you do not need or use a bigger VPS"
+  fi
+  if ! docker update --memory "${memory}k" --memory-swap "$(memory_swap "$memory")k" "$agent" >/dev/null 2>&1; then
+    echo "warning: could not change the memory limit of the agent of $project"
+  fi
+}
+
 ensure() {
   if ! running "$agent"; then
     echo "the agent of $project is not running, services start with the next \`sai chat $project\`"
@@ -151,6 +171,7 @@ ensure() {
     fi
   done
   mkdir -p "$dir"
+  limit_agent "${args[@]}"
   for ((i = 0; i < count; i++)); do
     local name=${args[i * fields]} kind=${args[i * fields + 1]} image=${args[i * fields + 2]}
     local prefix=${args[i * fields + 3]} volume=${args[i * fields + 4]} user=${args[i * fields + 5]}
@@ -170,7 +191,7 @@ ensure() {
       echo "==> Starting $name"
       # A service that fails to start must not keep the agent from starting
       if ! create "$name" "$kind" "$image" "$volume" "$user" "$password" "$root" "${names%%,*}" "$spec"; then
-        echo "could not start $name, it is retried on the next \`sai chat $project\`" >&2
+        echo "warning: could not start $name, it is retried on the next \`sai chat $project\`"
         continue
       fi
       fresh=1
@@ -186,7 +207,7 @@ ensure() {
       if configure "$name" "$kind" "$user" "$password" "$root" "$names"; then
         printf '%s\n' "$setup" > "$dir/$name.setup"
       else
-        echo "could not set up $name, it is retried on the next \`sai chat $project\`" >&2
+        echo "warning: could not set up $name, it is retried on the next \`sai chat $project\`"
       fi
     fi
   done

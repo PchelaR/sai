@@ -19,7 +19,10 @@ const ENSURE_IMAGE: &str = concat!(
     include_str!("../image/build.sh"),
     include_str!("scripts/ensure_image.sh")
 );
-const ENSURE_CONTAINER: &str = include_str!("scripts/ensure_container.sh");
+const ENSURE_CONTAINER: &str = concat!(
+    include_str!("../services/scripts/memory.sh"),
+    include_str!("scripts/ensure_container.sh")
+);
 const FREE_SPACE: &str = include_str!("scripts/free_space.sh");
 const GIT_CONFIG: &str = include_str!("scripts/git_config.sh");
 const OLD_CHATS: &str = include_str!("scripts/old_chats.sh");

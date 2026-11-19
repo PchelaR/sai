@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{attach, config, fingerprint, remote};
 
-const SCRIPT: &str = include_str!("scripts/services.sh");
+const SCRIPT: &str = concat!(
+    include_str!("scripts/memory.sh"),
+    include_str!("scripts/services.sh")
+);
 const MAX_VERSION: usize = 40;
 const MAX_NAME: usize = 64;
 const MAX_PASSWORD: usize = 64;
@@ -151,6 +154,11 @@ impl Service {
                     .all(|c| c.is_ascii_alphanumeric() || c == '_'),
             "{title}: the user can have latin letters, digits and _"
         );
+        // The MariaDB image refuses to create root as the user, its root is separate
+        ensure!(
+            self.kind != Kind::Mariadb || !self.user.eq_ignore_ascii_case("root"),
+            "{title}: root is the administrator of the server, pick another user"
+        );
         ensure!(
             !self.password.is_empty(),
             "{title}: set a password for {}",
@@ -162,6 +170,14 @@ impl Service {
             self.kind.names_label()
         );
         for name in &self.names {
+            // Rights on the system schemas would let the user rewrite every grant
+            ensure!(
+                self.kind != Kind::Mariadb
+                    || !SYSTEM_DATABASES
+                        .iter()
+                        .any(|system| name.eq_ignore_ascii_case(system)),
+                "{title}: {name} is a system database of MariaDB, pick another name"
+            );
             let ok = match self.kind {
                 Kind::Mariadb => name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
                 _ => name
@@ -248,13 +264,16 @@ impl Service {
             // The Debian client (11.x) insists on TLS, the server of the Docker image has
             // none, and the connection never leaves the container anyway
             Kind::Mariadb => format!(
-                "mariadb -h 127.0.0.1 -P {port} -u {} -p{} --skip-ssl <database>",
+                "mariadb -h 127.0.0.1 -P {port} -u {} -p'{}' --skip-ssl <database>",
                 self.user, self.password
             ),
             Kind::Redis if self.password.is_empty() => format!("redis-cli -p {port}"),
-            Kind::Redis => format!("redis-cli -p {port} -a {} --no-auth-warning", self.password),
+            Kind::Redis => format!(
+                "redis-cli -p {port} -a '{}' --no-auth-warning",
+                self.password
+            ),
             Kind::Rabbitmq => format!(
-                "curl -u {}:{} http://localhost:15672/api/overview (the management HTTP API)",
+                "curl -u '{}:{}' http://localhost:15672/api/overview (the management HTTP API)",
                 self.user, self.password
             ),
         }
@@ -294,6 +313,7 @@ impl Service {
     }
 }
 
+const SYSTEM_DATABASES: &[&str] = &["mysql", "information_schema", "performance_schema", "sys"];
 const PASSWORD_SYMBOLS: &str = "._-+=@%:,!#^*~";
 
 fn password_char(c: char) -> bool {
@@ -428,6 +448,13 @@ mod tests {
         assert!(service.validate().is_err());
         service.version = "10.11.8".to_owned();
         service.validate().unwrap();
+        service.user = "Root".to_owned();
+        assert!(service.validate().is_err());
+        service.user = "tos".to_owned();
+        service.names = split_names("test, mysql");
+        assert!(service.validate().is_err());
+        service.names = split_names("test, rs_server");
+        service.validate().unwrap();
         let mut rabbit = Service::new(Kind::Rabbitmq);
         rabbit.names = split_names("tos, /");
         rabbit.validate().unwrap();
@@ -461,7 +488,7 @@ mod tests {
         let mut stopped = Service::new(Kind::Mariadb);
         stopped.stopped = true;
         let text = super::instructions(&[redis, stopped]);
-        assert!(text.contains("redis-cli -p 6379 -a secret"));
+        assert!(text.contains("redis-cli -p 6379 -a 'secret'"));
         let mariadb = super::instructions(&[Service::new(Kind::Mariadb)]);
         assert!(mariadb.contains("--skip-ssl"));
         assert!(text.contains("MariaDB 10.11: stopped by the user"));

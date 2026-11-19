@@ -33,7 +33,7 @@ case "$mode" in
         fi
       done'
     docker volume rm "$volume" >/dev/null 2>&1 \
-      || echo "the old chats were copied, but $volume could not be removed: docker volume rm $volume" >&2
+      || echo "warning: the old chats were copied, but $volume could not be removed: docker volume rm $volume"
     ;;
   delete)
     docker volume rm "$volume" >/dev/null
