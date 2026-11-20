@@ -13,6 +13,8 @@ use crate::{chat, doctor, logs, output, reset, services, shell, snapshot, update
 pub enum Action {
     Open(Session),
     Run(Task),
+    /// Into the sai the menu just installed
+    Restart,
 }
 
 pub enum Session {
@@ -142,7 +144,7 @@ fn execute(task: Task) -> Result<()> {
         Task::Stop(name) => stop::run(Some(&name)),
         Task::Remove { name, purge } => remove::run(&name, purge),
         Task::Update => update::run(),
-        Task::Upgrade => upgrade::run(),
+        Task::Upgrade => upgrade::run(true),
         Task::Doctor => doctor::run(),
         Task::Logs => logs::report(),
         Task::Reset => reset::execute(false),

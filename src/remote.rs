@@ -209,6 +209,26 @@ fn start(script: &str, args: &[&str]) -> Result<Child> {
     Ok(child)
 }
 
+/// Runs a script here as it would run on the VPS, for tests
+#[cfg(test)]
+#[allow(dead_code)]
+pub fn run_locally(script: &str, args: &[&str], home: &std::path::Path) -> std::process::Output {
+    let mut child = Command::new("bash")
+        .arg("-s")
+        .env("HOME", home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("bash runs the scripts in tests");
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(stdin_script(script, args).as_bytes())
+            .unwrap();
+    }
+    child.wait_with_output().unwrap()
+}
+
 fn stdin_script(script: &str, args: &[&str]) -> String {
     let positional: String = args
         .iter()

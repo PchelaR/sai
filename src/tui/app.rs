@@ -15,7 +15,7 @@ use crate::chat::chats::{self, Chats};
 use crate::project::folders::Plan;
 use crate::project::list::{self, Row};
 use crate::snapshot::{Snapshot, review};
-use crate::{project, snapshot};
+use crate::{project, snapshot, upgrade};
 
 pub enum Outcome {
     Quit,
@@ -434,6 +434,12 @@ impl App {
             Mode::Running { title, log, result } => {
                 let finished = result.is_some();
                 if finished && matches!(key.code, KeyCode::Enter | KeyCode::Esc) {
+                    // Declined, the header keeps reminding until sai restarts
+                    if let Some(version) = upgrade::installed()
+                        && title == Task::Upgrade.title()
+                    {
+                        return self.offer_restart(version);
+                    }
                     return Some(Outcome::Refresh);
                 }
                 self.mode = Mode::Running { title, log, result };
@@ -499,7 +505,10 @@ impl App {
             }
             General::Vps => open(Session::Vps),
             General::Update => run(Task::Update),
-            General::Upgrade => run(Task::Upgrade),
+            General::Upgrade => match upgrade::installed() {
+                Some(version) => self.offer_restart(version),
+                None => run(Task::Upgrade),
+            },
             General::Doctor => run(Task::Doctor),
             General::Logs => run(Task::Logs),
             General::Reset => self.ask(Input::ResetConfirmation, String::new()),
@@ -980,6 +989,13 @@ impl App {
         None
     }
 
+    fn offer_restart(&mut self, version: &str) -> Option<Outcome> {
+        self.confirm(
+            format!("sai {version} is installed. Restart sai now to use it?"),
+            Action::Restart,
+        )
+    }
+
     fn confirm(&mut self, question: String, action: Action) -> Option<Outcome> {
         self.mode = Mode::Confirm { question, action };
         None
@@ -1011,5 +1027,64 @@ pub fn expand_home(input: &str) -> String {
     match (relative, etcetera::home_dir()) {
         (Some(relative), Ok(home)) => home.join(relative).display().to_string(),
         _ => input.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::crossterm::event::{KeyCode, KeyEvent};
+
+    use super::{Action, App, Mode, Outcome, Progress, Task};
+    use crate::upgrade;
+
+    fn press(app: &mut App, code: KeyCode) -> Option<Outcome> {
+        app.handle(KeyEvent::from(code))
+    }
+
+    fn finish(app: &mut App, task: Task) {
+        app.start(task.title());
+        app.progress(Progress::Line("Updated sai".to_owned()));
+        app.progress(Progress::Done(Ok(())));
+    }
+
+    #[test]
+    fn asks_to_restart_into_the_installed_sai_until_it_does() {
+        let mut app = App::default();
+        // Nothing installed yet: U downloads
+        assert!(matches!(
+            press(&mut app, KeyCode::Char('U')),
+            Some(Outcome::Run(Action::Run(Task::Upgrade)))
+        ));
+        upgrade::pretend_installed("9.9.9");
+
+        // Other tasks just go back to the list
+        finish(&mut app, Task::Doctor);
+        assert!(matches!(
+            press(&mut app, KeyCode::Enter),
+            Some(Outcome::Refresh)
+        ));
+
+        // After the upgrade: asked, not restarted without a yes
+        finish(&mut app, Task::Upgrade);
+        assert!(press(&mut app, KeyCode::Enter).is_none());
+        let Mode::Confirm { question, .. } = &app.mode else {
+            panic!("expected the question about restarting");
+        };
+        assert!(question.contains("9.9.9"));
+        assert!(press(&mut app, KeyCode::Char('x')).is_none());
+        assert!(
+            matches!(app.mode, Mode::Confirm { .. }),
+            "other keys keep the question"
+        );
+        assert!(press(&mut app, KeyCode::Char('n')).is_none());
+        assert!(matches!(app.mode, Mode::Browse));
+
+        // Declined: U asks again instead of downloading once more
+        assert!(press(&mut app, KeyCode::Char('U')).is_none());
+        assert!(matches!(app.mode, Mode::Confirm { .. }));
+        assert!(matches!(
+            press(&mut app, KeyCode::Char('y')),
+            Some(Outcome::Run(Action::Restart))
+        ));
     }
 }

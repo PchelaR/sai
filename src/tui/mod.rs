@@ -129,6 +129,11 @@ fn event_loop(terminal: &mut DefaultTerminal) -> Result<()> {
                 watcher = Some(bell::watch());
                 loading = reload(&mut app);
             }
+            // main starts the new sai in place of this one
+            Some(Outcome::Run(Action::Restart)) => {
+                crate::upgrade::restart_on_exit();
+                return Ok(());
+            }
             Some(Outcome::Run(Action::Run(task))) => {
                 app.start(task.title());
                 progress = Some(actions::spawn(task));

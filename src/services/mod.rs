@@ -420,6 +420,9 @@ pub fn instructions(services: &[Service]) -> String {
     text
 }
 
+#[cfg(all(test, target_os = "linux"))]
+mod script_tests;
+
 #[cfg(test)]
 mod tests {
     use super::{Kind, Service, split_names};

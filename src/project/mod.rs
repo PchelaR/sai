@@ -11,6 +11,8 @@ mod registry;
 pub mod remove;
 pub mod rename;
 pub mod repos;
+#[cfg(all(test, target_os = "linux"))]
+mod script_tests;
 pub mod size;
 pub mod stop;
 pub mod suggest;

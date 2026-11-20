@@ -4,6 +4,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail, ensure};
@@ -17,10 +19,17 @@ use crate::{image, output};
 
 const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 const CHECK_FILE: &str = "latest-release";
+
+/// The new sai the menu installed, and its version: the menu offers to restart into it
+static INSTALLED: OnceLock<(PathBuf, String)> = OnceLock::new();
+/// The user agreed to restart: on the way out this sai starts the new one in its place
+static RESTART: AtomicBool = AtomicBool::new(false);
 const SUMS: &str = "SHA256SUMS";
 const OLD_SUFFIX: &str = ".old";
 
-pub fn run() -> Result<()> {
+/// From the menu the user is asked next whether to restart into the new version; from the
+/// command line nothing else of this sai runs anyway
+pub fn run(in_menu: bool) -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
     let executable = executable()?;
     output::step("Looking for a new version of sai");
@@ -51,8 +60,14 @@ pub fn run() -> Result<()> {
     let rebuild = rebuild_notice(&binary);
     replace(&executable, &binary)?;
     fs::remove_dir_all(&work).ok();
+    let next = if in_menu {
+        INSTALLED.set((executable, release.version.clone())).ok();
+        ""
+    } else {
+        ". Other open sai windows keep the old one until restarted"
+    };
     output::info(&format!(
-        "Updated sai {current} to {}. Restart sai to use it",
+        "Updated sai {current} to {}{next}",
         release.version
     ));
     if let Some(rebuild) = rebuild {
@@ -104,6 +119,49 @@ pub fn notice() {
             "sai {version} is available, update with `sai upgrade`"
         ));
     }
+}
+
+/// The version the menu installed, while this older sai still runs
+pub fn installed() -> Option<&'static str> {
+    INSTALLED.get().map(|(_, version)| version.as_str())
+}
+
+/// Tests stand in for an upgrade from the menu: the path leads nowhere, nothing restarts
+#[cfg(test)]
+pub fn pretend_installed(version: &str) {
+    INSTALLED
+        .set((PathBuf::from("/nowhere/sai"), version.to_owned()))
+        .ok();
+}
+
+pub fn restart_on_exit() {
+    RESTART.store(true, Ordering::Relaxed);
+}
+
+/// After the user agreed, runs the sai the menu installed in place of this one: on Unix it replaces the process,
+/// on Windows, which cannot, it waits for the new one and hands back its exit code.
+/// Mutagen keeps syncing, the new sai is still there. None without a new sai, or when it
+/// does not start: then this one just ends, as before
+pub fn relaunch() -> Option<i32> {
+    if !RESTART.load(Ordering::Relaxed) {
+        return None;
+    }
+    let (executable, _) = INSTALLED.get()?;
+    let mut command = Command::new(executable);
+    #[cfg(unix)]
+    let error = {
+        use std::os::unix::process::CommandExt;
+        command.exec()
+    };
+    #[cfg(not(unix))]
+    let error = match command.status() {
+        Ok(status) => return Some(status.code().unwrap_or(1)),
+        Err(error) => error,
+    };
+    output::warning(&format!(
+        "cannot start the new sai, start it again yourself: {error}"
+    ));
+    None
 }
 
 pub fn clean_up() {
@@ -290,7 +348,15 @@ fn now() -> u64 {
 mod tests {
     use std::fs;
 
-    use super::{SUMS, archive_folder, newer, verify};
+    use super::{SUMS, archive_folder, newer, relaunch, restart_on_exit, verify};
+
+    /// Nothing installed here, or the stand-in of the menu's test that leads nowhere:
+    /// either way this sai goes on to end by itself
+    #[test]
+    fn restarting_without_a_new_sai_lets_this_one_end() {
+        restart_on_exit();
+        assert!(relaunch().is_none());
+    }
 
     #[test]
     fn compares_versions() {

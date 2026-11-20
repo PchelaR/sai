@@ -11,6 +11,13 @@ const USER_DENY: &str = "Forbidden in the sai config";
 const BELL: &str = include_str!("bell.sh");
 pub const TURN_REPORT_TARGET: &str = "/opt/sai/turn-report";
 
+/// The hook runs the report when the container has it. Settings reach a running container
+/// at once, the report only with the next one: until the agent restarts, a bare call failed
+/// on every answer
+pub fn turn_report(mode: &str) -> String {
+    format!("[ ! -x {TURN_REPORT_TARGET} ] || {TURN_REPORT_TARGET} {mode}")
+}
+
 const BUILT_IN: &[(&str, &str)] = &[
     ("rm", DELETE),
     ("rmdir", DELETE),
@@ -103,7 +110,8 @@ impl Permissions {
             .iter()
             .map(|words| pattern(words))
             .collect();
-        let report = |mode: &str| json!({ "type": "command", "command": format!("{TURN_REPORT_TARGET} {mode}"), "timeout": 60 });
+        let report =
+            |mode: &str| json!({ "type": "command", "command": turn_report(mode), "timeout": 60 });
         let bell = json!([{ "hooks": [
             { "type": "command", "command": BELL, "timeout": 5 },
             report("report")
@@ -219,11 +227,11 @@ mod tests {
         assert_eq!(hooks["Notification"][0]["matcher"], "permission_prompt");
         assert_eq!(
             hooks["UserPromptSubmit"][0]["hooks"][0]["command"],
-            "/opt/sai/turn-report start"
+            "[ ! -x /opt/sai/turn-report ] || /opt/sai/turn-report start"
         );
         assert_eq!(
             hooks["Stop"][0]["hooks"][1]["command"],
-            "/opt/sai/turn-report report"
+            "[ ! -x /opt/sai/turn-report ] || /opt/sai/turn-report report"
         );
         for event in ["Stop", "Notification"] {
             let command = hooks[event][0]["hooks"][0]["command"].as_str().unwrap();

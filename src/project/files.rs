@@ -7,7 +7,7 @@ use super::{Folder, Registry, detach};
 use crate::chat::chats;
 use crate::{attach, mutagen, output, remote, snapshot};
 
-const REMOVE_SKIPPED: &str = include_str!("scripts/remove_skipped.sh");
+pub(super) const REMOVE_SKIPPED: &str = include_str!("scripts/remove_skipped.sh");
 
 pub fn run(name: Option<&str>, folder: Option<&str>) -> Result<()> {
     let mut registry = Registry::open()?;

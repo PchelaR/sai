@@ -15,6 +15,7 @@ use crate::chat::chats::Chats;
 use crate::output::{printable, printable_line};
 use crate::project::size::human;
 use crate::snapshot::Snapshot;
+use crate::upgrade;
 
 const COMMAND_WIDTH: usize = 12;
 const DESCRIPTION_WIDTH: usize = 36;
@@ -125,13 +126,18 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         .loaded
         .as_ref()
         .and_then(|loaded| loaded.latest.as_deref());
-    let title = match (app.loading, latest) {
-        (true, _) => Line::from(" sai · loading… "),
-        (false, Some(version)) => {
+    let title = match (app.loading, latest, upgrade::installed()) {
+        // Until sai restarts into the version it installed
+        (_, _, Some(version)) => Line::from(format!(
+            " sai · {version} is installed but not running yet, press U to restart "
+        ))
+        .fg(Color::Yellow),
+        (true, _, None) => Line::from(" sai · loading… "),
+        (false, Some(version), None) => {
             Line::from(format!(" sai · {version} is available, press U to update "))
                 .fg(Color::Yellow)
         }
-        (false, None) => Line::from(" sai "),
+        (false, None, None) => Line::from(" sai "),
     };
     let line = match (&app.error, &app.loaded) {
         (Some(_), None) => Line::from("Cannot load the projects, see below").fg(Color::Red),

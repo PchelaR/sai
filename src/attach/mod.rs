@@ -616,6 +616,9 @@ fn choose_agent(name: &str, requested: Option<Agent>, bound: Option<Agent>) -> R
     }
 }
 
+#[cfg(all(test, target_os = "linux"))]
+mod script_tests;
+
 #[cfg(test)]
 mod tests {
     use super::choose_agent;

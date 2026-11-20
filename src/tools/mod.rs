@@ -21,13 +21,13 @@ const CODEX_REQUIREMENTS_FILE: &str = "codex-requirements.toml";
 const CODEX_REQUIREMENTS: &str = r#"[[hooks.UserPromptSubmit]]
 [[hooks.UserPromptSubmit.hooks]]
 type = "command"
-command = "/opt/sai/turn-report start"
+command = "[ ! -x /opt/sai/turn-report ] || /opt/sai/turn-report start"
 timeout = 60
 
 [[hooks.Stop]]
 [[hooks.Stop.hooks]]
 type = "command"
-command = "/opt/sai/turn-report report"
+command = "[ ! -x /opt/sai/turn-report ] || /opt/sai/turn-report report"
 timeout = 60
 "#;
 const WATCHED: &[&str] = &[
@@ -201,10 +201,47 @@ fn snapshot_excludes() -> String {
         .collect()
 }
 
+#[cfg(all(test, target_os = "linux"))]
+mod script_tests;
+
 #[cfg(test)]
 mod tests {
-    use super::read_only_mounts;
+    use super::{CODEX_REQUIREMENTS, policy, read_only_mounts};
     use crate::agent::Agent;
+
+    /// Settings reach a running container before the report does: the hook must not fail
+    #[cfg(unix)]
+    #[test]
+    fn the_hook_skips_a_report_the_container_does_not_have_yet() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = crate::testing::TempDir::new("hook");
+        let script = dir.join("turn-report");
+        let hook = |mode: &str| {
+            let command = policy::turn_report(mode)
+                .replace(policy::TURN_REPORT_TARGET, &script.to_string_lossy());
+            std::process::Command::new("sh")
+                .args(["-c", &command])
+                .output()
+                .unwrap()
+        };
+        let missing = hook("start");
+        assert!(missing.status.success());
+        assert!(missing.stdout.is_empty() && missing.stderr.is_empty());
+
+        std::fs::write(&script, "#!/bin/sh\necho \"ran $1\"\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let present = hook("report");
+        assert!(present.status.success());
+        assert_eq!(String::from_utf8_lossy(&present.stdout), "ran report\n");
+
+        // Codex runs the same commands
+        for mode in ["start", "report"] {
+            assert!(
+                CODEX_REQUIREMENTS
+                    .contains(&format!("command = \"{}\"", policy::turn_report(mode)))
+            );
+        }
+    }
 
     #[test]
     fn mounts_only_the_agents_own_files() {

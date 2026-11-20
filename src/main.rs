@@ -18,6 +18,8 @@ mod quote;
 mod remote;
 mod reset;
 mod resolve;
+#[cfg(test)]
+mod scripts_tests;
 mod secrets;
 mod services;
 mod setup;
@@ -25,6 +27,8 @@ mod shell;
 mod snapshot;
 mod ssh;
 mod status;
+#[cfg(test)]
+mod testing;
 mod tools;
 mod tui;
 mod update;
@@ -170,7 +174,16 @@ async fn main() -> anyhow::Result<()> {
     if let Err(error) = &result {
         logs::error(error);
     }
+    // Before leaving: the new sai takes the place of this one without pausing the syncs
+    let relaunched = if result.is_ok() {
+        upgrade::relaunch()
+    } else {
+        None
+    };
     presence.leave();
+    if let Some(code) = relaunched {
+        std::process::exit(code);
+    }
     result
 }
 
@@ -238,7 +251,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Doctor => doctor::run(),
         Command::Logs => logs::report(),
         Command::Update => update::run(),
-        Command::Upgrade => upgrade::run(),
+        Command::Upgrade => upgrade::run(false),
         Command::Reset { all } => reset::run(all),
         Command::Stop { project } => project::stop::run(project.as_deref()),
         Command::Rename { project, new_name } => {

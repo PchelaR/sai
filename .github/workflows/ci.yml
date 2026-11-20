@@ -20,3 +20,42 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
+
+  # The scripts sai runs on the VPS, run for real: services in Docker, snapshots, the
+  # report of each answer. shellcheck catches what bash -n cannot. All tests run here once
+  # more, with coverage: the summary is on the run's page, the full report in its artifacts
+  vps-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: shellcheck
+        run: git ls-files '*.sh' | xargs shellcheck --shell=bash --severity=error
+      - name: Pull the images the tests use
+        run: |
+          docker pull -q debian:trixie-slim
+          docker pull -q mariadb:10.11
+          docker pull -q redis:7
+          docker pull -q rabbitmq:3.13-management
+      - name: Tests with the scripts against Docker
+        env:
+          SAI_DOCKER_TESTS: "1"
+        run: cargo llvm-cov --locked --no-report -- --test-threads=2
+      - name: Coverage
+        run: |
+          cargo llvm-cov report --html
+          {
+            echo '## Coverage'
+            echo '```'
+            cargo llvm-cov report --summary-only
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: coverage
+          path: target/llvm-cov/html
