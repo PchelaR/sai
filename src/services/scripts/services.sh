@@ -94,15 +94,25 @@ data_dir() {
   esac
 }
 
+# Until the service answers: the agent should find it working as soon as the chat opens
+ready() {
+  local name=$1 kind=$2
+  case "$kind" in
+    # Over TCP: while the image creates the database on first start, it runs a server
+    # without network, and setting up users at that moment breaks its own setup
+    mariadb) wait_for "$name" sh -c 'mariadb-admin ping -h 127.0.0.1 --protocol=tcp --silent || mysqladmin ping -h 127.0.0.1 --protocol=tcp --silent' ;;
+    rabbitmq) wait_for "$name" rabbitmq-diagnostics -q check_running ;;
+    redis) wait_for "$name" sh -c 'redis-cli ping 2>&1 | grep -qE "PONG|NOAUTH"' ;;
+  esac
+}
+
 # Users, databases and vhosts are set up on every change, so editing them in sai works
 # on a database that already has data
 configure() {
   local name=$1 kind=$2 user=$3 password=$4 root=$5 names=$6 sql item
   case "$kind" in
     mariadb)
-      # Over TCP: while the image creates the database on first start, it runs a server
-      # without network, and setting up users at that moment breaks its own setup
-      wait_for "$name" sh -c 'mariadb-admin ping -h 127.0.0.1 --protocol=tcp --silent || mysqladmin ping -h 127.0.0.1 --protocol=tcp --silent' || return 1
+      ready "$name" "$kind" || return 1
       sql="CREATE USER IF NOT EXISTS '$user'@'%' IDENTIFIED BY '$password'; ALTER USER '$user'@'%' IDENTIFIED BY '$password';"
       for item in ${names//,/ }; do
         sql+=" CREATE DATABASE IF NOT EXISTS \`$item\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
@@ -118,7 +128,7 @@ configure() {
       done
       ;;
     rabbitmq)
-      wait_for "$name" rabbitmq-diagnostics -q check_running || return 1
+      ready "$name" "$kind" || return 1
       docker exec "$name" rabbitmqctl -q add_user "$user" "$password" >/dev/null 2>&1 \
         || docker exec "$name" rabbitmqctl -q change_password "$user" "$password" >/dev/null
       docker exec "$name" rabbitmqctl -q set_user_tags "$user" administrator >/dev/null
@@ -195,11 +205,22 @@ ensure() {
         continue
       fi
       fresh=1
-    elif ! running "$name"; then
-      docker start "$name" >/dev/null
-    elif [[ "$(docker container inspect -f '{{ .State.StartedAt }}' "$name")" < "$agent_started" ]]; then
-      # The agent container restarted after the service, which then lost its network
-      docker restart "$name" >/dev/null
+    else
+      local started=
+      if ! running "$name"; then
+        echo "==> Starting $name"
+        docker start "$name" >/dev/null
+        started=1
+      elif [[ "$(docker container inspect -f '{{ .State.StartedAt }}' "$name")" < "$agent_started" ]]; then
+        # The agent container restarted after the service, which then lost its network
+        echo "==> Restarting $name"
+        docker restart "$name" >/dev/null
+        started=1
+      fi
+      # Started before was not waited for: the chat opened while the database still booted
+      if [ -n "$started" ] && ! ready "$name" "$kind"; then
+        echo "warning: $name does not answer yet, the agent may have to wait for it"
+      fi
     fi
     local setup
     setup=$(printf '%s\n' "$kind" "$user" "$password" "$names" | sha256sum | cut -d ' ' -f 1)

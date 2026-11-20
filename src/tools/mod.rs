@@ -206,7 +206,7 @@ mod script_tests;
 
 #[cfg(test)]
 mod tests {
-    use super::{CODEX_REQUIREMENTS, policy, read_only_mounts};
+    use super::read_only_mounts;
     use crate::agent::Agent;
 
     /// Settings reach a running container before the report does: the hook must not fail
@@ -214,6 +214,8 @@ mod tests {
     #[test]
     fn the_hook_skips_a_report_the_container_does_not_have_yet() {
         use std::os::unix::fs::PermissionsExt;
+
+        use super::{CODEX_REQUIREMENTS, policy};
         let dir = crate::testing::TempDir::new("hook");
         let script = dir.join("turn-report");
         let hook = |mode: &str| {
