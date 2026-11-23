@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 use super::{Project, Registry};
-use crate::chat::chats::BUSY;
 use crate::{mutagen, remote};
 
 const LIST: &str = concat!(
@@ -36,7 +35,6 @@ impl Row {
 
     pub fn set_agent_state(&mut self, state: &str) {
         self.state = describe_state(state);
-        self.busy = BUSY.contains(&state);
     }
 }
 
@@ -60,7 +58,6 @@ pub struct Row {
     pub state: String,
     pub sync: String,
     pub review: usize,
-    pub busy: bool,
     pub folders: Vec<FolderRow>,
 }
 
@@ -95,7 +92,6 @@ pub fn load() -> Result<Vec<Row>> {
                 state: OTHER_VPS.to_owned(),
                 sync: "uploaded here on the next chat".to_owned(),
                 review: 0,
-                busy: false,
                 folders: project
                     .folders
                     .iter()
@@ -138,10 +134,6 @@ pub fn load() -> Result<Vec<Row>> {
                     .get(project.name.as_str())
                     .unwrap_or(&NO_CONTAINER),
             ),
-            busy: listing
-                .states
-                .get(project.name.as_str())
-                .is_some_and(|state| BUSY.contains(state)),
             sync: summary(&folders),
             review: listing
                 .reviews
@@ -160,7 +152,6 @@ pub fn load() -> Result<Vec<Row>> {
                 state: ONLY_ON_VPS.to_owned(),
                 sync: "Enter: attach a folder".to_owned(),
                 review: 0,
-                busy: false,
                 folders: Vec::new(),
             });
         }

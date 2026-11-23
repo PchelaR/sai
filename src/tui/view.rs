@@ -245,22 +245,9 @@ fn render_project_menu(frame: &mut Frame, app: &App, selected: usize) {
     let name = app
         .selected_project()
         .map_or("", |project| project.name.as_str());
-    let busy = app.selected_project().is_some_and(|project| project.busy);
-    let items = ProjectItem::ALL.iter().map(|item| {
-        if busy && matches!(item, ProjectItem::NewChat) {
-            ListItem::new(
-                format!(
-                    "{:<COMMAND_WIDTH$}{:<DESCRIPTION_WIDTH$}[{}]",
-                    item.command(),
-                    "Available when the agent finishes",
-                    item.key()
-                )
-                .dark_gray(),
-            )
-        } else {
-            menu_item(item.command(), item.description(), item.key())
-        }
-    });
+    let items = ProjectItem::ALL
+        .iter()
+        .map(|item| menu_item(item.command(), item.description(), item.key()));
     let area = popup(frame.area(), 58, ProjectItem::ALL.len() as u16 + 2);
     frame.render_widget(Clear, area);
     render_list(frame, area, &format!(" {name} "), items, Some(selected));
@@ -320,14 +307,23 @@ fn render_chats(
         ChatPurpose::Remove => format!(" delete a chat in {project} "),
     };
     let running = chats.running().map(|chat| chat.id.as_str());
-    let items = chats.list.iter().map(|chat| {
+    let new = purpose.offers_new().then(|| {
+        let line = if chats.busy() {
+            Line::from("+ new chat  ·  available when the agent finishes").dark_gray()
+        } else {
+            Line::from("+ new chat")
+        };
+        ListItem::new(line)
+    });
+    let items = new.into_iter().chain(chats.list.iter().map(|chat| {
         let mut spans = vec![Span::from(printable_line(&chat.label()))];
         if running == Some(chat.id.as_str()) {
             spans.push(Span::from(format!("  {}", chats.state)).fg(Color::Yellow));
         }
         ListItem::new(Line::from(spans))
-    });
-    let height = (chats.list.len() as u16 + 2).min(frame.area().height.saturating_sub(4));
+    }));
+    let rows = chats.list.len() + usize::from(purpose.offers_new());
+    let height = (rows as u16 + 2).min(frame.area().height.saturating_sub(4));
     let area = popup(frame.area(), 90, height);
     frame.render_widget(Clear, area);
     render_list(frame, area, &title, items, Some(selected));
@@ -705,7 +701,7 @@ fn footer_keys(mode: &Mode) -> &'static str {
         Mode::Chats {
             purpose: ChatPurpose::Open,
             ..
-        } => "[↑] [↓] move   [Enter] open   [v] read   [Esc] back",
+        } => "[↑] [↓] move   [Enter] open   [n] new chat   [v] read   [Esc] back",
         Mode::Chats { .. } => "[↑] [↓] move   [Enter] delete   [v] read   [Esc] back",
         Mode::Review { .. } => "[Enter] I checked them   [Esc] later",
         Mode::ProjectMenu { .. } | Mode::Snapshots { .. } => {

@@ -36,6 +36,13 @@ pub enum ChatPurpose {
     Remove,
 }
 
+impl ChatPurpose {
+    /// Opening a chat lists "+ new chat" first, above the chats
+    pub fn offers_new(&self) -> bool {
+        matches!(self, ChatPurpose::Open)
+    }
+}
+
 pub enum AgentChoice {
     Attach { project: String },
     Change { project: String },
@@ -217,19 +224,21 @@ impl App {
                 self.mode = Mode::Browse;
                 match (result, purpose) {
                     (Err(error), _) => self.error = Some(error),
-                    (Ok(chats), ChatPurpose::Open) if chats.list.len() < 2 => {
+                    // Nothing to continue: straight into a new chat
+                    (Ok(chats), ChatPurpose::Open) if chats.list.is_empty() => {
                         self.pending = open(Session::Chat(project, Start::Last));
                     }
                     (Ok(chats), ChatPurpose::Remove) if chats.list.is_empty() => {
                         self.error = Some(format!("{project} has no chats yet"));
                     }
+                    // On the latest chat, so Enter continues it as before
                     (Ok(chats), purpose) => {
                         self.mode = Mode::Chats {
                             project,
                             agent,
+                            selected: usize::from(purpose.offers_new()),
                             purpose,
                             chats,
-                            selected: 0,
                         }
                     }
                 }
@@ -547,13 +556,6 @@ impl App {
         }
         match item {
             ProjectItem::Chat => self.load_chats(name, agent_of(project), ChatPurpose::Open),
-            ProjectItem::NewChat if project.busy => {
-                self.error = Some(format!(
-                    "the agent in {name} is busy with a task, new chat is available when it finishes"
-                ));
-                None
-            }
-            ProjectItem::NewChat => open(Session::Chat(name, Start::New)),
             ProjectItem::RemoveChat => {
                 self.load_chats(name, agent_of(project), ChatPurpose::Remove)
             }
@@ -785,11 +787,23 @@ impl App {
         selected: usize,
         key: KeyEvent,
     ) -> Option<Outcome> {
-        let last = chats.list.len().saturating_sub(1);
+        let offset = usize::from(purpose.offers_new());
+        let last = (chats.list.len() + offset).saturating_sub(1);
+        let new_chat = |app: &mut App, project: String| {
+            if chats.busy() {
+                app.error = Some(BUSY_NEW.to_owned());
+                return None;
+            }
+            open(Session::Chat(project, Start::New))
+        };
         let selected = match key.code {
             KeyCode::Esc => return None,
+            KeyCode::Char('n') if purpose.offers_new() => return new_chat(self, project),
+            KeyCode::Enter if purpose.offers_new() && selected == 0 => {
+                return new_chat(self, project);
+            }
             KeyCode::Enter => {
-                let chat = chats.list.get(selected)?;
+                let chat = chats.list.get(selected - offset)?;
                 return match purpose {
                     ChatPurpose::Open => {
                         let switching =
@@ -817,8 +831,9 @@ impl App {
                     }
                 };
             }
-            KeyCode::Char('v') => {
-                let chat = chats.list.get(selected)?;
+            // Not on "+ new chat": it has nothing to read
+            KeyCode::Char('v') if selected >= offset => {
+                let chat = chats.list.get(selected - offset)?;
                 let (sender, receiver) = mpsc::channel();
                 let (name, id) = (project.clone(), chat.id.clone());
                 thread::spawn(move || {
@@ -1006,6 +1021,7 @@ const VIEW_PAGE: usize = 20;
 const VIEW_TAIL: usize = 30;
 const BUSY_SWITCH: &str =
     "the agent is busy with a task in the current chat, switch when it finishes";
+const BUSY_NEW: &str = "the agent is busy with a task, start a new chat when it finishes";
 const BUSY_REMOVE: &str = "the agent is busy in this chat, delete it when the agent finishes";
 
 fn agent_of(project: &Row) -> Agent {
@@ -1034,8 +1050,86 @@ pub fn expand_home(input: &str) -> String {
 mod tests {
     use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
-    use super::{Action, App, Mode, Outcome, Progress, Task};
+    use super::{Action, App, ChatPurpose, Mode, Outcome, Progress, Session, Task};
+    use crate::agent::{Agent, Start};
+    use crate::chat::chats::{Chat, Chats};
     use crate::upgrade;
+
+    fn chat_list(app: &mut App, purpose: ChatPurpose, state: &str) {
+        let list = (0..2)
+            .map(|i| Chat {
+                id: format!("c{i}"),
+                modified: 0,
+                title: format!("chat {i}"),
+            })
+            .collect();
+        let selected = usize::from(purpose.offers_new());
+        app.mode = Mode::Chats {
+            project: "shop".to_owned(),
+            agent: Agent::Claude,
+            purpose,
+            chats: Chats {
+                state: state.to_owned(),
+                clients: 0,
+                list,
+            },
+            selected,
+        };
+    }
+
+    fn opens(outcome: Option<Outcome>) -> Option<Start> {
+        match outcome {
+            Some(Outcome::Run(Action::Open(Session::Chat(project, start)))) => {
+                assert_eq!(project, "shop");
+                Some(start)
+            }
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn one_entry_continues_a_chat_or_starts_a_new_one() {
+        let mut app = App::default();
+        // The cursor starts on the latest chat: Enter continues it
+        chat_list(&mut app, ChatPurpose::Open, "idle");
+        let start = opens(press(&mut app, KeyCode::Enter));
+        assert!(matches!(start, Some(Start::Open(id)) if id == "c0"));
+        // "+ new chat" above it
+        chat_list(&mut app, ChatPurpose::Open, "idle");
+        assert!(press(&mut app, KeyCode::Up).is_none());
+        assert!(press(&mut app, KeyCode::Char('v')).is_none());
+        assert!(
+            matches!(app.mode, Mode::Chats { selected: 0, .. }),
+            "nothing to read there"
+        );
+        assert!(matches!(
+            opens(press(&mut app, KeyCode::Enter)),
+            Some(Start::New)
+        ));
+        // n from anywhere in the list
+        chat_list(&mut app, ChatPurpose::Open, "idle");
+        assert!(matches!(
+            opens(press(&mut app, KeyCode::Char('n'))),
+            Some(Start::New)
+        ));
+        // Not while the agent works in the current chat
+        chat_list(&mut app, ChatPurpose::Open, "working");
+        assert!(press(&mut app, KeyCode::Char('n')).is_none());
+        assert!(
+            app.error
+                .as_deref()
+                .is_some_and(|error| error.contains("busy"))
+        );
+
+        // Deleting lists only the chats
+        chat_list(&mut app, ChatPurpose::Remove, "idle");
+        assert!(press(&mut app, KeyCode::Char('n')).is_none());
+        assert!(press(&mut app, KeyCode::Enter).is_none());
+        let Mode::Confirm { question, .. } = &app.mode else {
+            panic!("expected the question about deleting");
+        };
+        assert!(question.contains("chat 0"));
+    }
 
     fn press(app: &mut App, code: KeyCode) -> Option<Outcome> {
         app.handle(KeyEvent::from(code))
