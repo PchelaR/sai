@@ -136,7 +136,6 @@ fn the_agent_container_is_created_kept_and_replaced_when_it_changed() {
     cleanup.images.extend([first.clone(), second.clone()]);
     shell("docker network inspect sai-net >/dev/null 2>&1 || docker network create sai-net");
     agent_image(&first, "a");
-    agent_image(&second, "b");
 
     let workspace = home.join("projects/box");
     fs::create_dir_all(&workspace).unwrap();
@@ -278,7 +277,9 @@ fn the_agent_container_is_created_kept_and_replaced_when_it_changed() {
         "the project is still there"
     );
 
-    // A new image: replaced, and the old one of the same agent goes
+    // A new image: replaced, and the old one of the same agent goes. Built only now:
+    // every run keeps just the image in use, a newer one built ahead would go too
+    agent_image(&second, "b");
     let before = id();
     ensure(&second, "two");
     assert_ne!(id(), before);
