@@ -59,3 +59,19 @@ jobs:
         with:
           name: coverage
           path: target/llvm-cov/html
+
+  # The setup of a VPS, run on the runner itself with the scripts `sai setup` sends: it
+  # changes sshd, the firewall and users there, fine on a machine thrown away after the job
+  vps-setup:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the tests first, the firewall comes up during them
+        run: cargo test --locked --no-run
+      - name: sshd, as every VPS has
+        run: sudo apt-get install -y -q openssh-server
+      - name: Setup of a VPS
+        env:
+          SAI_VPS_TESTS: "1"
+        run: cargo test --locked setup::script_tests

@@ -1,4 +1,6 @@
 mod credentials;
+#[cfg(all(test, target_os = "linux"))]
+mod script_tests;
 mod steps;
 
 use anyhow::{Context, Result, bail};
