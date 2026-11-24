@@ -17,7 +17,12 @@ fail() {
 }
 
 stamps() {
-  ls -1 "$snapshots/$1" 2>/dev/null | grep -v '\.partial$' | sort || true
+  local path
+  for path in "$snapshots/$1"/*; do
+    [ -e "$path" ] || continue
+    path=${path##*/}
+    [[ $path == *.partial ]] || printf '%s\n' "$path"
+  done | sort
 }
 
 epoch() {

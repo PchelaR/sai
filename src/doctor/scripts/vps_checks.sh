@@ -45,7 +45,8 @@ else
 fi
 
 if [ -x "$HOME/.sai/bin/snapshots" ]; then
-  export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+  XDG_RUNTIME_DIR="/run/user/$(id -u)"
+  export XDG_RUNTIME_DIR
   if systemctl --user is-active --quiet sai-snapshot.timer; then
     report ok "snapshot timer"
   else

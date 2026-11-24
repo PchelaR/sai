@@ -78,7 +78,7 @@ done <<< "$changes"
 if [ "$files" -gt "$shown" ]; then
   listed+=$'\n'"  and $((files - shown)) more"
 fi
-if [ "$files" -eq 1 ]; then noun=file; else noun=files; fi
+if [ "$files" -eq 1 ]; then noun='file'; else noun='files'; fi
 text="Changed in this answer: $files $noun, +$added_total -$removed_total$listed"
 
 escape() {

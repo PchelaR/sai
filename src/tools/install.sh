@@ -21,7 +21,8 @@ while [ $# -gt 0 ]; do
   changed=1
 done
 
-export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export XDG_RUNTIME_DIR
 if [ -n "$changed" ]; then
   systemctl --user daemon-reload
   systemctl --user restart sai-snapshot.timer >/dev/null 2>&1 || true
