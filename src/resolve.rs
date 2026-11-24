@@ -7,6 +7,8 @@ pub fn run(name: Option<&str>) -> Result<()> {
     let registry = Registry::open()?;
     let project = registry.resolve(name)?;
     for target in project.targets() {
+        // Folders the agent deleted are not conflicts to undo
+        mutagen::finish_deletions(&target)?;
         output::step(&format!(
             "Replacing VPS files with local versions in {}",
             target.local.display()

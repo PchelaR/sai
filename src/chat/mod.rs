@@ -67,6 +67,11 @@ pub fn run(name: Option<&str>, agent: Option<Agent>, start: Start) -> Result<()>
     ));
     drop(watcher);
     review::after_chat(&name);
+    for target in attached.project.targets() {
+        if let Err(error) = crate::mutagen::finish_deletions(&target) {
+            crate::logs::error(&error);
+        }
+    }
     // After the chat: before it, tmux would cover the tips at once
     crate::windows_terminal::offer_once();
     result

@@ -32,9 +32,30 @@ pub struct Ignore {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Conflict {
     #[serde(default)]
     root: String,
+    #[serde(default)]
+    alpha_changes: Vec<Change>,
+}
+
+#[derive(Deserialize)]
+struct Change {
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    new: Option<serde_json::Value>,
+}
+
+impl Conflict {
+    /// The VPS side deleted the whole folder, and mutagen stopped because the local one
+    /// still has something it does not sync: build output, or files of the user
+    fn deleted_on_alpha(&self) -> bool {
+        self.alpha_changes
+            .iter()
+            .any(|change| change.path == self.root && change.new.is_none())
+    }
 }
 
 #[derive(Default, Deserialize)]
@@ -74,6 +95,18 @@ struct Problem {
 impl Session {
     pub fn local_path(&self) -> &str {
         &self.local().path
+    }
+
+    /// Folders the agent deleted that are still in the local copy, relative to its root
+    pub fn deleted_by_agent(&self) -> Vec<&str> {
+        if !self.agent_wins() {
+            return Vec::new();
+        }
+        self.conflicts
+            .iter()
+            .filter(|conflict| conflict.deleted_on_alpha())
+            .map(|conflict| conflict.root.as_str())
+            .collect()
     }
 
     fn agent_wins(&self) -> bool {
@@ -139,10 +172,18 @@ impl Session {
             .filter(|(_, endpoint)| !self.paused && !endpoint.connected)
             .map(|(side, _)| format!("sync is not connected to the {side}"));
         let conflicts = self.conflicts.iter().map(|conflict| {
-            format!(
-                "sync conflict at {}, run `sai resolve <project>` to keep the local versions",
-                conflict.root
-            )
+            if self.agent_wins() && conflict.deleted_on_alpha() {
+                // `sai resolve` would bring the folder back to the VPS, not what the agent did
+                format!(
+                    "the agent deleted {}, but your copy keeps files there that sai does not sync, delete the folder yourself if you do not need them",
+                    conflict.root
+                )
+            } else {
+                format!(
+                    "sync conflict at {}, run `sai resolve <project>` to keep the local versions",
+                    conflict.root
+                )
+            }
         });
         let problems = [("local", self.local()), ("VPS", self.vps())]
             .into_iter()
@@ -236,6 +277,31 @@ mod tests {
         let session = parse(r#"{"paused":true,"status":"disconnected"}"#);
         assert!(session.issues().is_empty());
         assert_eq!(session.summary(), "paused");
+    }
+
+    #[test]
+    fn knows_folders_the_agent_deleted() {
+        let deleted = r#"{"root":"tests/functional","alphaChanges":[{"path":"tests/functional","old":{"kind":"directory"},"new":null}],"betaChanges":[{"path":"tests/functional/__pycache__","new":{"kind":"untracked"}}]}"#;
+        let edited = r#"{"root":"a.txt","alphaChanges":[{"path":"a.txt","new":{"kind":"file"}}]}"#;
+        let session = parse(&format!(
+            r#"{{"mode":"two-way-resolved","status":"watching","conflicts":[{deleted},{edited}],"alpha":{{"connected":true}},"beta":{{"connected":true}}}}"#
+        ));
+        assert_eq!(session.deleted_by_agent(), ["tests/functional"]);
+        let issues = session.issues();
+        assert!(
+            issues[0].contains("the agent deleted tests/functional"),
+            "{issues:?}"
+        );
+        assert!(
+            !issues[0].contains("sai resolve"),
+            "resolve would bring it back"
+        );
+        assert!(issues[1].contains("sai resolve"));
+        // Where the local side wins, the VPS deleting is not the agent's word
+        let local_wins = parse(&format!(
+            r#"{{"mode":"two-way-safe","conflicts":[{deleted}],"alpha":{{"connected":true}},"beta":{{"connected":true}}}}"#
+        ));
+        assert!(local_wins.deleted_by_agent().is_empty());
     }
 
     #[test]

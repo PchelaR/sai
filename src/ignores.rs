@@ -219,6 +219,30 @@ fn skipped_dir(name: &str) -> bool {
             .any(|pattern| matches(pattern, name))
 }
 
+/// Whether a folder holds nothing but build output and system junk (`__pycache__`,
+/// `target`, `.DS_Store`...), which sai never syncs. Anything else, or a folder it cannot
+/// read, counts as the user's
+pub fn only_build_output(dir: &Path) -> bool {
+    let Ok(mut entries) = fs::read_dir(dir) else {
+        return false;
+    };
+    entries.all(|entry| {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+        build_output(&name, is_dir) || (is_dir && only_build_output(&entry.path()))
+    })
+}
+
+fn build_output(name: &str, is_dir: bool) -> bool {
+    BUILD.iter().any(|pattern| match pattern.strip_suffix('/') {
+        Some(dir) => is_dir && matches(dir, name),
+        None => matches(pattern, name),
+    })
+}
+
 pub fn matches(pattern: &str, name: &str) -> bool {
     match pattern.split_once('*') {
         Some((prefix, suffix)) => {
@@ -234,7 +258,33 @@ pub fn matches(pattern: &str, name: &str) -> bool {
 mod tests {
     use std::fs;
 
-    use super::{BUILD, FILE, anchored, custom, matches, scoped};
+    use super::{BUILD, FILE, anchored, custom, matches, only_build_output, scoped};
+
+    #[test]
+    fn tells_build_output_from_the_users_files() {
+        let dir = crate::testing::TempDir::new("build-output");
+        let root = dir.join("tests");
+        for path in [
+            "__pycache__/a.pyc",
+            "unit/__pycache__/b.pyc",
+            ".pytest_cache/v/x",
+        ] {
+            let path = root.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "x").unwrap();
+        }
+        fs::write(root.join(".DS_Store"), "x").unwrap();
+        fs::create_dir_all(root.join("empty")).unwrap();
+        assert!(only_build_output(&root));
+        fs::write(root.join("unit/test_api.py"), "x").unwrap();
+        assert!(!only_build_output(&root), "a test of the user");
+        assert!(!only_build_output(&dir.join("missing")));
+        // A file named like a build folder is still the user's
+        let named = dir.join("named");
+        fs::create_dir_all(&named).unwrap();
+        fs::write(named.join("target"), "x").unwrap();
+        assert!(!only_build_output(&named));
+    }
 
     #[test]
     fn applies_ignore_rules_like_mutagen() {

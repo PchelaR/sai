@@ -2,7 +2,9 @@ mod install;
 mod session;
 
 use std::ffi::OsStr;
+use std::fs;
 use std::io::Read;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -159,6 +161,46 @@ pub fn flush(id: &str) -> Result<()> {
     run(&["sync", "flush", id])
         .map(|_| ())
         .context("failed to finish the current sync, check the connection and try again")
+}
+
+/// Finishes what the agent deleted: mutagen stops at a deleted folder whose local copy
+/// still holds what it does not sync. When that is only build output (`__pycache__` of
+/// tests the agent removed, say), it goes too; files of the user stay, and the sync
+/// issue tells about them
+pub fn finish_deletions(target: &SyncTarget) -> Result<()> {
+    let Some(session) = session(&target.id)? else {
+        return Ok(());
+    };
+    for root in session.deleted_by_agent() {
+        if remove_leftovers(&target.local, root) {
+            output::info(&format!(
+                "The agent deleted {root}, its build leftovers in {} went with it",
+                target.local.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Removes a deleted folder when nothing but build output is left in it
+fn remove_leftovers(local: &Path, root: &str) -> bool {
+    let path = local.join(root);
+    if root.is_empty()
+        || root
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+        || !path.is_dir()
+        || !ignores::only_build_output(&path)
+    {
+        return false;
+    }
+    match fs::remove_dir_all(&path) {
+        Ok(()) => true,
+        Err(error) => {
+            logs::line(&format!("cannot remove {}: {error}", path.display()));
+            false
+        }
+    }
 }
 
 pub fn report_issues(id: &str) -> Result<()> {
@@ -344,4 +386,38 @@ fn run<S: AsRef<OsStr>>(args: &[S]) -> Result<String> {
         output::printable(stderr.trim())
     );
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::remove_leftovers;
+    use crate::testing::TempDir;
+
+    #[test]
+    fn removes_only_build_leftovers_of_deleted_folders() {
+        let local = TempDir::new("leftovers");
+        for path in [
+            "tests/functional/__pycache__/a.pyc",
+            "tests/unit/__pycache__/b.pyc",
+            "tests/unit/test_mine.py",
+            "keep/__pycache__/c.pyc",
+        ] {
+            let path = local.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "x").unwrap();
+        }
+        assert!(remove_leftovers(&local.path, "tests/functional"));
+        assert!(!local.join("tests/functional").exists());
+        assert!(
+            !remove_leftovers(&local.path, "tests/unit"),
+            "a file of the user"
+        );
+        assert!(local.join("tests/unit/test_mine.py").exists());
+        for bad in ["", "..", "tests/../keep", "/keep", "missing"] {
+            assert!(!remove_leftovers(&local.path, bad), "{bad}");
+        }
+        assert!(local.join("keep/__pycache__/c.pyc").exists());
+    }
 }
