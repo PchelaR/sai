@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::ValueEnum;
 
 use crate::agent::Agent;
+use crate::config::Config;
 use crate::{image, output, remote};
 
 const UPDATE_IMAGES: &str = concat!(
@@ -11,7 +12,8 @@ const UPDATE_IMAGES: &str = concat!(
 
 pub fn run() -> Result<()> {
     output::step("Rebuilding images with the latest versions (may take up to an hour)");
-    let mut args = vec![image::base(), image::encoded_base()];
+    let cache = Config::load()?.build_cache().to_owned();
+    let mut args = vec![image::base(), image::encoded_base(), cache];
     for agent in Agent::value_variants() {
         args.push(image::agent(*agent));
         args.push(image::encoded_agent(*agent));

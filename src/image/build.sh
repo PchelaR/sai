@@ -30,3 +30,21 @@ docker_build() {
   fi
   rm -f "$log"
 }
+
+# The build cache follows `build_cache` in the config of sai: yes keeps it between builds,
+# no drops it and frees the disk at once. Unset, the choice of `sai setup` stays
+build_cache() {
+  local marker="$HOME/.sai/keep-build-cache"
+  case "${1:-}" in
+    yes)
+      mkdir -p "${marker%/*}"
+      touch "$marker"
+      ;;
+    no)
+      if [ -f "$marker" ]; then
+        rm -f "$marker"
+        docker builder prune -af >/dev/null 2>&1 || true
+      fi
+      ;;
+  esac
+}

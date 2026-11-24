@@ -334,3 +334,27 @@ fn the_sign_in_moves_out_of_the_old_shared_volume() {
         "only Claude needs its onboarding skipped"
     );
 }
+
+#[test]
+fn the_build_cache_follows_the_config() {
+    let home = TempDir::new("build-cache");
+    let script = format!(
+        "{}\ndocker() {{ touch \"$HOME/pruned\"; }}\nbuild_cache \"$1\"",
+        include_str!("../image/build.sh")
+    );
+    let marker = home.join(".sai/keep-build-cache");
+    let pruned = home.join("pruned");
+    let set = |choice: &str| ok(testing::run(&script, &[choice], &home.path));
+
+    set("yes");
+    assert!(marker.exists(), "kept between builds");
+    set("");
+    assert!(marker.exists(), "unset in the config: as setup left it");
+    assert!(!pruned.exists());
+    set("no");
+    assert!(!marker.exists());
+    assert!(pruned.exists(), "the disk is freed at once");
+    fs::remove_file(&pruned).unwrap();
+    set("no");
+    assert!(!pruned.exists(), "only once, not on every chat");
+}

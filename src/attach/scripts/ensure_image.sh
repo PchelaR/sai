@@ -3,6 +3,7 @@ image=$2
 dockerfile=$3
 agent=$4
 base_dockerfile=$5
+build_cache "${6:-}"
 
 if ! docker image inspect "$base" >/dev/null 2>&1; then
   if [ -n "$(docker images -q "${base%:*}")" ]; then

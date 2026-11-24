@@ -20,6 +20,9 @@ pub struct Config {
     port: Option<u16>,
     #[serde(default)]
     pub agents: Permissions,
+    /// Docker's build cache on the VPS: kept, the agent image is rebuilt in minutes after
+    /// an update of sai instead of 15-30, for a few GB of disk. Unset: as `sai setup` asked
+    build_cache: Option<bool>,
 }
 
 impl Config {
@@ -43,6 +46,19 @@ impl Config {
             .validate()
             .with_context(|| format!("invalid config at {}", path.display()))?;
         Ok(config)
+    }
+
+    /// The argument the image scripts take: yes, no, or empty to keep what is on the VPS
+    pub fn build_cache(&self) -> &'static str {
+        match self.build_cache {
+            Some(true) => "yes",
+            Some(false) => "no",
+            None => "",
+        }
+    }
+
+    pub fn wants_build_cache(&self) -> Option<bool> {
+        self.build_cache
     }
 
     pub fn port(&self) -> u16 {
@@ -82,4 +98,24 @@ fn path() -> Result<PathBuf> {
 
 pub fn dir() -> Result<PathBuf> {
     Ok(etcetera::choose_base_strategy()?.config_dir().join("sai"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    fn config(extra: &str) -> Config {
+        toml::from_str(&format!(
+            "ssh_key = \"~/.ssh/id\"\nip = \"1.2.3.4\"\n{extra}"
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_build_cache_is_set_by_hand_or_left_to_setup() {
+        assert_eq!(config("build_cache = true").build_cache(), "yes");
+        assert_eq!(config("build_cache = false").build_cache(), "no");
+        assert_eq!(config("").build_cache(), "");
+        assert_eq!(config("").wants_build_cache(), None);
+    }
 }

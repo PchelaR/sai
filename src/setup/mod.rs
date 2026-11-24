@@ -32,12 +32,15 @@ pub async fn run(minimal: bool) -> Result<()> {
         output::info("Nothing was changed");
         return Ok(());
     }
-    let keep_cache = Confirm::new()
-        .with_prompt(
-            "Keep Docker's build cache on the VPS? Rebuilding the agent image after a sai update then takes minutes instead of 15-30, but the cache takes a few more GB of disk. Worth it with 50 GB of disk or more",
-        )
-        .default(false)
-        .interact()?;
+    let keep_cache = match config.wants_build_cache() {
+        Some(keep) => keep,
+        None => Confirm::new()
+            .with_prompt(
+                "Keep Docker's build cache on the VPS? Rebuilding the agent image after a sai update then takes minutes instead of 15-30, but the cache takes a few more GB of disk. Worth it with 50 GB of disk or more. Change it later with build_cache = true or false in the config",
+            )
+            .default(false)
+            .interact()?,
+    };
     env.push((
         "SAI_KEEP_BUILD_CACHE",
         if keep_cache { "yes" } else { "" }.to_owned(),

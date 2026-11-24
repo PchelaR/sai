@@ -1,6 +1,7 @@
 base=$1
 base_dockerfile=$2
-shift 2
+build_cache "$3"
+shift 3
 
 printf '%s' "$base_dockerfile" | base64 -d \
   | docker_build --pull --no-cache -t "$base" --build-arg UID="$(id -u)" -

@@ -34,8 +34,10 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
+      # Warnings too. Each file is a piece of a larger script, so variables and functions
+      # defined in another piece are not flagged (SC2154, SC2034)
       - name: shellcheck
-        run: git ls-files '*.sh' | xargs shellcheck --shell=bash --severity=error
+        run: git ls-files '*.sh' | xargs shellcheck --shell=bash --severity=warning --exclude=SC2154,SC2034
       - name: Pull the images the tests use
         run: |
           docker pull -q debian:trixie-slim

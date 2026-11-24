@@ -251,6 +251,7 @@ pub fn ensure(registry: &mut Registry, name: &str, requested: Option<Agent>) -> 
             &image::encoded_agent(agent),
             agent.name(),
             &image::encoded_base(),
+            config.build_cache(),
         ]),
     ));
     for service in &project.services {
