@@ -44,7 +44,7 @@ fn run(step: &Step, pubkey: &str) -> String {
 fn login(key: &str, port: u16) -> String {
     shell(&format!(
         "ssh -p {port} -i {key} -o BatchMode=yes -o StrictHostKeyChecking=no \
-         -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 {USER}@127.0.0.1 echo logged-in 2>&1"
+         -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 {USER}@127.0.0.1 echo logged-in 2>&1"
     ))
 }
 
