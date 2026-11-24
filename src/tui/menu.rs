@@ -150,3 +150,40 @@ impl ProjectItem {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::{General, ProjectItem};
+
+    /// The list takes both kinds of keys at once: a shared key would hide one of them
+    #[test]
+    fn every_key_does_one_thing() {
+        let keys: Vec<char> = General::ALL
+            .iter()
+            .map(|item| item.key())
+            .chain(ProjectItem::ALL.iter().map(|item| item.key()))
+            .collect();
+        let unique: HashSet<char> = keys.iter().copied().collect();
+        assert_eq!(unique.len(), keys.len(), "{keys:?}");
+        for key in ['j', 'k', '?'] {
+            assert!(
+                !unique.contains(&key),
+                "{key} moves the cursor or opens the help"
+            );
+        }
+        let commands: HashSet<&str> = General::ALL
+            .iter()
+            .map(|item| item.command())
+            .chain(ProjectItem::ALL.iter().map(|item| item.command()))
+            .collect();
+        assert_eq!(commands.len(), keys.len());
+        for item in ProjectItem::ALL {
+            assert!(!item.description().is_empty());
+        }
+        for item in General::ALL {
+            assert!(!item.description().is_empty());
+        }
+    }
+}

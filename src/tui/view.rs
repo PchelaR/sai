@@ -735,7 +735,257 @@ fn popup(area: Rect, width: u16, height: u16) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use super::wrapped_lines;
+    use std::sync::mpsc;
+
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use super::{render, wrapped_lines};
+    use crate::agent::Agent;
+    use crate::chat::chats::{Chat, Chats};
+    use crate::project::list::Row;
+    use crate::snapshot::Snapshot;
+    use crate::status::Vps;
+    use crate::tui::app::{AgentChoice, App, ChatPurpose, Input, Mode};
+    use crate::tui::loader::Loaded;
+
+    fn row(name: &str, state: &str, only_on_vps: bool) -> Row {
+        Row {
+            only_on_vps,
+            name: name.to_owned(),
+            agent: "claude".to_owned(),
+            state: state.to_owned(),
+            sync: "synced".to_owned(),
+            review: 0,
+            folders: Vec::new(),
+        }
+    }
+
+    fn app(latest: Option<&str>) -> App {
+        let mut app = App::default();
+        app.update(Ok(Loaded {
+            ip: "203.0.113.7".to_owned(),
+            projects: vec![
+                row("shop", "your turn", false),
+                row("remote", "only on VPS", true),
+            ],
+            vps: Vps::default(),
+            latest: latest.map(str::to_owned),
+        }));
+        app
+    }
+
+    /// What the terminal shows, one line per row
+    fn screen(app: &App, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| render(frame, app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn chats(state: &str) -> Chats {
+        Chats {
+            state: state.to_owned(),
+            clients: 0,
+            list: vec![Chat {
+                id: "c0".to_owned(),
+                modified: 0,
+                title: "Refactor the scheduler".to_owned(),
+            }],
+        }
+    }
+
+    /// Every screen of the menu, as the user can reach it
+    fn modes() -> Vec<Mode> {
+        let (_, chats_loading) = mpsc::channel();
+        let (_, view_loading) = mpsc::channel();
+        let (_, review_loading) = mpsc::channel();
+        let (_, snapshots_loading) = mpsc::channel();
+        vec![
+            Mode::Browse,
+            Mode::ProjectMenu { selected: 3 },
+            Mode::Input {
+                purpose: Input::Project,
+                value: "new shop".to_owned(),
+            },
+            Mode::Input {
+                purpose: Input::Rename {
+                    project: "shop".to_owned(),
+                },
+                value: "store".to_owned(),
+            },
+            Mode::Input {
+                purpose: Input::RestorePath {
+                    project: "shop".to_owned(),
+                    snapshot: "20261120-100000".to_owned(),
+                },
+                value: String::new(),
+            },
+            Mode::Input {
+                purpose: Input::ResetConfirmation,
+                value: String::new(),
+            },
+            Mode::Input {
+                purpose: Input::PurgeConfirmation {
+                    project: "shop".to_owned(),
+                },
+                value: "sh".to_owned(),
+            },
+            Mode::ChooseAgent {
+                selected: 1,
+                purpose: AgentChoice::Attach {
+                    project: "shop".to_owned(),
+                },
+            },
+            Mode::ChooseAgent {
+                selected: 0,
+                purpose: AgentChoice::Change {
+                    project: "shop".to_owned(),
+                },
+            },
+            Mode::LoadingChats {
+                project: "shop".to_owned(),
+                agent: Agent::Claude,
+                purpose: ChatPurpose::Open,
+                receiver: chats_loading,
+            },
+            Mode::Chats {
+                project: "shop".to_owned(),
+                agent: Agent::Claude,
+                purpose: ChatPurpose::Open,
+                chats: chats("working"),
+                selected: 1,
+            },
+            Mode::Chats {
+                project: "shop".to_owned(),
+                agent: Agent::Claude,
+                purpose: ChatPurpose::Remove,
+                chats: chats("idle"),
+                selected: 0,
+            },
+            Mode::LoadingChatView {
+                title: "Refactor".to_owned(),
+                receiver: view_loading,
+                back: Box::new(Mode::Browse),
+            },
+            Mode::ChatView {
+                title: "Refactor".to_owned(),
+                lines: (0..200)
+                    .map(|line| format!("line {line} ").repeat(30))
+                    .collect(),
+                scroll: 150,
+                back: Box::new(Mode::Browse),
+            },
+            Mode::LoadingReview {
+                project: "shop".to_owned(),
+                receiver: review_loading,
+            },
+            Mode::Review {
+                project: "shop".to_owned(),
+                lines: vec!["front/build.rs".to_owned(); 60],
+            },
+            Mode::LoadingSnapshots {
+                project: "shop".to_owned(),
+                receiver: snapshots_loading,
+            },
+            Mode::Snapshots {
+                project: "shop".to_owned(),
+                snapshots: (0..40)
+                    .map(|day| Snapshot {
+                        stamp: format!("202611{:02}-100000", day % 28 + 1),
+                        summary: "changed 3, added 1".to_owned(),
+                    })
+                    .collect(),
+                selected: 39,
+            },
+            Mode::Confirm {
+                question: "Delete the chat? ".repeat(20),
+                action: crate::tui::actions::Action::Restart,
+            },
+            Mode::Help,
+            Mode::Running {
+                title: "doctor".to_owned(),
+                log: (0..100).map(|line| format!("==> step {line}")).collect(),
+                result: Some(Err("docker is missing ".repeat(10))),
+            },
+        ]
+    }
+
+    #[test]
+    fn every_screen_draws_in_any_window() {
+        for size in [(120, 40), (80, 24), (40, 12), (20, 6), (1, 1)] {
+            for mode in modes() {
+                let mut app = app(Some("9.9.9"));
+                app.error = Some("cannot reach the VPS ".repeat(10));
+                app.mode = mode;
+                screen(&app, size.0, size.1);
+            }
+        }
+    }
+
+    #[test]
+    fn the_list_shows_projects_their_state_and_the_keys() {
+        let shown = screen(&app(None), 120, 40);
+        for text in [
+            "shop",
+            "your turn",
+            "remote",
+            "203.0.113.7",
+            "[U]",
+            "[q]",
+            "quit",
+        ] {
+            assert!(shown.contains(text), "{text} in\n{shown}");
+        }
+        assert!(!shown.contains("is available"));
+        // Another test may have pretended an upgrade, then the header asks to restart instead
+        if crate::upgrade::installed().is_none() {
+            let newer = screen(&app(Some("9.9.9")), 120, 40);
+            assert!(
+                newer.contains("9.9.9 is available, press U to update"),
+                "{newer}"
+            );
+        }
+        assert!(screen(&App::default(), 120, 40).contains("Connecting to the VPS"));
+    }
+
+    #[test]
+    fn the_chat_list_offers_a_new_chat_unless_the_agent_works() {
+        let mut app = app(None);
+        app.mode = Mode::Chats {
+            project: "shop".to_owned(),
+            agent: Agent::Claude,
+            purpose: ChatPurpose::Open,
+            chats: chats("idle"),
+            selected: 1,
+        };
+        let idle = screen(&app, 120, 40);
+        assert!(idle.contains("+ new chat") && idle.contains("Refactor the scheduler"));
+        assert!(idle.contains("[n] new chat"), "the footer tells the key");
+        app.mode = Mode::Chats {
+            project: "shop".to_owned(),
+            agent: Agent::Claude,
+            purpose: ChatPurpose::Open,
+            chats: chats("working"),
+            selected: 1,
+        };
+        assert!(screen(&app, 120, 40).contains("available when the agent finishes"));
+        app.mode = Mode::Chats {
+            project: "shop".to_owned(),
+            agent: Agent::Claude,
+            purpose: ChatPurpose::Remove,
+            chats: chats("idle"),
+            selected: 0,
+        };
+        assert!(!screen(&app, 120, 40).contains("+ new chat"));
+    }
 
     #[test]
     fn counts_wrapped_lines() {
