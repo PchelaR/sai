@@ -104,6 +104,7 @@ pub fn sync(target: &SyncTarget) -> Result<()> {
             "Applying new ignore rules to {}",
             target.local.display()
         ));
+        deliver(&target.id)?;
         resync(target, &ignores)?;
     }
     Ok(())
@@ -153,7 +154,7 @@ pub fn finish(id: &str) -> Result<()> {
     if session.paused {
         run(&["sync", "resume", id])?;
     }
-    flush(id)?;
+    deliver(id)?;
     terminate(id)
 }
 
@@ -168,18 +169,53 @@ pub fn flush(id: &str) -> Result<()> {
 /// tests the agent removed, say), it goes too; files of the user stay, and the sync
 /// issue tells about them
 pub fn finish_deletions(target: &SyncTarget) -> Result<()> {
-    let Some(session) = session(&target.id)? else {
-        return Ok(());
+    clean_deletions(&target.id).map(|_| ())
+}
+
+/// Whether anything was removed, then mutagen needs another cycle to see it
+fn clean_deletions(id: &str) -> Result<bool> {
+    let Some(session) = session(id)? else {
+        return Ok(false);
     };
+    let local = Path::new(session.local_path());
+    let mut removed = false;
     for root in session.deleted_by_agent() {
-        if remove_leftovers(&target.local, root) {
+        if remove_leftovers(local, root) {
+            removed = true;
             output::info(&format!(
                 "The agent deleted {root}, its build leftovers in {} went with it",
-                target.local.display()
+                local.display()
             ));
         }
     }
-    Ok(())
+    Ok(removed)
+}
+
+/// Brings what the agent changed to the local copy before a session ends: sai uploads
+/// the local copy again afterwards, and anything stuck on the way would be undone on the
+/// VPS without a word
+fn deliver(id: &str) -> Result<()> {
+    flush(id)?;
+    if clean_deletions(id)? {
+        flush(id)?;
+    }
+    let Some(session) = session(id)? else {
+        return Ok(());
+    };
+    let undelivered = session.undelivered();
+    if undelivered.is_empty() {
+        return Ok(());
+    }
+    let shown: Vec<&str> = undelivered.iter().take(5).map(String::as_str).collect();
+    let more = match undelivered.len() - shown.len() {
+        0 => String::new(),
+        count => format!(" and {count} more"),
+    };
+    anyhow::bail!(
+        "changes of the agent in {} have not all reached your computer ({}{more}). sai stops here, or uploading your copy would undo them on the VPS. Fix what `sai doctor` shows and try again, or keep your local versions with `sai resolve`",
+        session.local_path(),
+        shown.join("; ")
+    )
 }
 
 /// Removes a deleted folder when nothing but build output is left in it

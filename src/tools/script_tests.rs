@@ -239,3 +239,32 @@ fn snapshots_keep_changes_and_restore_them() {
     snapshots.ok(&["purge", "shop"]);
     assert!(snapshots.ok(&["list", "shop"]).is_empty());
 }
+
+#[test]
+fn snapshots_refuse_names_and_paths_that_leave_their_folders() {
+    let snapshots = Snapshots::new();
+    snapshots.write("front/a.rs", "a");
+    snapshots.ok(&["take", "shop"]);
+    let stamp = snapshots.ok(&["list", "shop"]);
+    let stamp = stamp.split('\t').next().unwrap();
+    fs::create_dir_all(snapshots.home.join("keep")).unwrap();
+    for args in [
+        vec!["purge", ""],
+        vec!["purge", ".."],
+        vec!["purge", "../keep"],
+        vec!["take", "Shop"],
+        vec!["list", "shop/../.."],
+        vec!["restore", "shop", "../shop", ""],
+        vec!["restore", "shop", stamp, "front/../../keep"],
+        vec!["restore", "shop", stamp, "/etc"],
+        vec!["restore", "shop", stamp, "", "../keep"],
+    ] {
+        let output = snapshots.run(&args);
+        assert!(!output.status.success(), "{args:?} must be refused");
+    }
+    assert!(snapshots.home.join("keep").exists());
+    assert!(
+        !snapshots.ok(&["list", "shop"]).is_empty(),
+        "nothing was purged"
+    );
+}

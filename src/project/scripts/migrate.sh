@@ -3,6 +3,18 @@ container=$2
 workspace=$3
 snapshots=$4
 folder=$5
+# Files of a whole project move into $folder: only a plain name inside the project folders
+[[ "$folder" =~ ^[A-Za-z0-9._-]+$ ]] && [ "$folder" != . ] && [ "$folder" != .. ] \
+  || { echo "invalid folder name: $folder" >&2; exit 1; }
+for dir in "$workspace" "$snapshots"; do
+  case "${dir#"$HOME"/}" in
+    projects/* | snapshots/*) ;;
+    *) echo "refusing to move files in $dir" >&2; exit 1 ;;
+  esac
+  case "${dir#"$HOME"/*/}" in
+    "" | */* | . | ..) echo "refusing to move files in $dir" >&2; exit 1 ;;
+  esac
+done
 
 nest() {
   local dir=$1

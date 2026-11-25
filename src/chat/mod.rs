@@ -68,7 +68,9 @@ pub fn run(name: Option<&str>, agent: Option<Agent>, start: Start) -> Result<()>
     drop(watcher);
     review::after_chat(&name);
     for target in attached.project.targets() {
-        if let Err(error) = crate::mutagen::finish_deletions(&target) {
+        if let Err(error) = crate::mutagen::finish_deletions(&target)
+            .and_then(|()| crate::mutagen::report_issues(&target.id))
+        {
             crate::logs::error(&error);
         }
     }

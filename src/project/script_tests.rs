@@ -281,3 +281,43 @@ fn old_single_folder_projects_get_their_folder() {
     fs::write(home.join("chat-open"), "").unwrap();
     fails(migrate("check"));
 }
+
+#[test]
+fn renaming_and_migrating_refuse_paths_outside_the_projects() {
+    let home = TempDir::new("guards");
+    files(&home.path, &["projects/shop/a.rs", "keep/b.rs"]);
+    for (old, new) in [
+        ("shop", "../keep"),
+        ("..", "x"),
+        ("shop", ""),
+        ("Shop", "store"),
+    ] {
+        fails(testing::run(
+            &with_docker(RENAME),
+            &["move", old, new],
+            &home.path,
+        ));
+    }
+    let root = text(&home.path);
+    for (workspace, folder) in [
+        (format!("{root}/keep"), "front"),
+        (format!("{root}/projects/shop/a"), "front"),
+        (format!("{root}/projects/.."), "front"),
+        (format!("{root}/projects/shop"), ".."),
+        (format!("{root}/projects/shop"), "a/b"),
+    ] {
+        fails(testing::run(
+            &with_docker(MIGRATE),
+            &[
+                "move",
+                "sai-shop",
+                &workspace,
+                &format!("{root}/snapshots/shop"),
+                folder,
+            ],
+            &home.path,
+        ));
+    }
+    assert!(home.join("keep/b.rs").exists());
+    assert!(home.join("projects/shop/a.rs").exists(), "nothing moved");
+}

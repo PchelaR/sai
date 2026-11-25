@@ -208,6 +208,34 @@ restore() {
   fi
 }
 
+# sai checks what it passes, and this checks again: these end up in rm -rf and rsync --delete
+check_name() {
+  [[ "$1" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail "invalid project name: $1"
+}
+
+check_stamp() {
+  [[ "$1" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || fail "snapshot $1 not found, see \`sai snapshots\`"
+}
+
+check_path() {
+  case "/$1/" in
+    //* | */../* | */./*) fail "path must be relative to the project folder: $1" ;;
+  esac
+}
+
+case "${1:-}" in
+  take | list | watched | reviewed | purge) check_name "${2:-}" ;;
+  restore)
+    check_name "${2:-}"
+    check_stamp "${3:-}"
+    for item in "${@:4}"; do
+      if [ -n "$item" ]; then
+        check_path "$item"
+      fi
+    done
+    ;;
+esac
+
 mkdir -p "$snapshots"
 exec 9>"$tools/snapshots.lock"
 flock 9

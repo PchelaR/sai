@@ -97,6 +97,26 @@ impl Session {
         &self.local().path
     }
 
+    /// What the VPS changed that did not reach the local copy. Ending the session then and
+    /// uploading the local copy again would undo it on the VPS
+    pub fn undelivered(&self) -> Vec<String> {
+        let conflicts = self
+            .conflicts
+            .iter()
+            .map(|conflict| format!("conflict at {}", conflict.root));
+        let not_written = self
+            .local()
+            .transition_problems
+            .iter()
+            .map(|problem| format!("{}: {}", problem.path, problem.error));
+        let not_read = self
+            .vps()
+            .scan_problems
+            .iter()
+            .map(|problem| format!("{} on the VPS: {}", problem.path, problem.error));
+        conflicts.chain(not_written).chain(not_read).collect()
+    }
+
     /// Folders the agent deleted that are still in the local copy, relative to its root
     pub fn deleted_by_agent(&self) -> Vec<&str> {
         if !self.agent_wins() {
@@ -302,6 +322,19 @@ mod tests {
             r#"{{"mode":"two-way-safe","conflicts":[{deleted}],"alpha":{{"connected":true}},"beta":{{"connected":true}}}}"#
         ));
         assert!(local_wins.deleted_by_agent().is_empty());
+    }
+
+    #[test]
+    fn knows_what_did_not_reach_the_local_copy() {
+        let session = parse(
+            r#"{"mode":"two-way-resolved","conflicts":[{"root":"tests"}],"alpha":{"scanProblems":[{"path":"a","error":"denied"}],"transitionProblems":[{"path":"b","error":"busy"}]},"beta":{"scanProblems":[{"path":"c","error":"denied"}],"transitionProblems":[{"path":"d","error":"locked"}]}}"#,
+        );
+        assert_eq!(
+            session.undelivered(),
+            ["conflict at tests", "d: locked", "a on the VPS: denied"],
+            "what the VPS failed to write or the local copy failed to read is not lost by an upload"
+        );
+        assert!(parse(WATCHING).undelivered().is_empty());
     }
 
     #[test]

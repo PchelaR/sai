@@ -1,6 +1,10 @@
 mode=$1
 old=$2
 new=$3
+# Both end up in mv of whole project folders
+for name in "$old" "$new"; do
+  [[ "$name" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || { echo "invalid project name: $name" >&2; exit 1; }
+done
 
 case "$mode" in
   check)
